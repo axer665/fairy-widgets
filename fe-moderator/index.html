@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Модерация виджетов</title>
+    <link rel="stylesheet" href="/moderator/styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="top">
+        <h1>Модерация заявок</h1>
+        <div id="auth-bar" class="auth-bar"></div>
+      </header>
+
+      <section id="login-section" class="panel">
+        <h2>Вход модератора</h2>
+        <form id="login-form">
+          <label>Логин <input name="login" required autocomplete="username" /></label>
+          <label>Пароль <input name="password" type="password" required autocomplete="current-password" /></label>
+          <button type="submit">Войти</button>
+          <p id="login-error" class="error" hidden></p>
+        </form>
+      </section>
+
+      <section id="list-section" class="panel" hidden>
+        <h2>Заявки</h2>
+        <ul id="applications" class="list"></ul>
+      </section>
+    </div>
+    <script src="/moderator/app.js"></script>
+  </body>
+</html>

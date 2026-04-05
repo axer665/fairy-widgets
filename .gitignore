@@ -1,0 +1,43 @@
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- IDE / редактор ---
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Node / Nuxt (fe-client) ---
+fe-client/node_modules/
+fe-client/.nuxt/
+fe-client/.output/
+fe-client/dist/
+fe-client/.nitro/
+fe-client/.cache/
+fe-client/coverage/
+fe-client/*.log
+fe-client/npm-debug.log*
+fe-client/yarn-debug.log*
+fe-client/yarn-error.log*
+fe-client/pnpm-debug.log*
+
+# --- PHP / Composer (если появится) ---
+backend/vendor/
+backend/.phpunit.cache/
+backend/.php-cs-fixer.cache
+
+# --- Секреты и локальные env ---
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# --- Docker (локальные оверрайды) ---
+docker-compose.override.yml
+
+# --- Логи и временные файлы ---
+*.log
+tmp/
+temp/
+.cache/
