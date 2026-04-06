@@ -27,6 +27,13 @@ backend/vendor/
 backend/.phpunit.cache/
 backend/.php-cs-fixer.cache
 
+# --- TLS (кладите mylittlepony.crt / mylittlepony.key локально) ---
+ssl/*.key
+ssl/*.crt
+ssl/*.pem
+!ssl/.gitkeep
+!ssl/README.md
+
 # --- Секреты и локальные env ---
 .env
 .env.local

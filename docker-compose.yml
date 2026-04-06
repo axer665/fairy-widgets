@@ -2,10 +2,13 @@ services:
   proxy:
     build: ./proxy
     ports:
-      - "8080:80"
+      - "80:80"
+      - "443:443"
     volumes:
       # Изменения конфига: перезапуск прокси — docker compose restart proxy
       - ./proxy/httpd-vhosts.conf:/usr/local/apache2/conf/extra/httpd-vhosts.conf:ro
+      # Сертификаты: см. ssl/README.md (mylittlepony.crt, mylittlepony.key)
+      - ./ssl:/usr/local/apache2/conf/ssl:ro
     depends_on:
       - backend
       - fe-client
@@ -18,11 +21,11 @@ services:
     environment:
       APP_ENV: production
       DB_HOST: mysql
-      DB_NAME: widget_app
-      DB_USER: widget
-      DB_PASSWORD: widget_secret
-      JWT_SECRET: change_me_in_production_use_long_random_string
-      APP_URL: http://localhost:8080
+      DB_NAME: ${MYSQL_DATABASE:-widget_app}
+      DB_USER: ${MYSQL_USER:-widget}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-widget_secret}
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production_use_long_random_string}
+      APP_URL: ${PUBLIC_BASE_URL:-https://localhost}
     volumes:
       - ./backend:/var/www/html
     depends_on:
@@ -34,15 +37,25 @@ services:
   mysql:
     image: mysql:8.4
     environment:
-      MYSQL_DATABASE: widget_app
-      MYSQL_USER: widget
-      MYSQL_PASSWORD: widget_secret
-      MYSQL_ROOT_PASSWORD: root_secret
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-widget_app}
+      MYSQL_USER: ${MYSQL_USER:-widget}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-widget_secret}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_secret}
     volumes:
       - mysql_data:/var/lib/mysql
       - ./backend/sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_secret"]
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost",
+          "-u",
+          "root",
+          "-p${MYSQL_ROOT_PASSWORD:-root_secret}",
+        ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -63,8 +76,8 @@ services:
       NUXT_PUBLIC_API_BASE: ""
       # HMR через bind-mount в Docker (особенно Mac/Windows)
       NUXT_DOCKER_DEV: "1"
-      # Должен совпадать с тем, как открываете сайт в браузере (localhost vs 127.0.0.1)
-      NUXT_DEV_ORIGIN: http://localhost:8080
+      # Публичный URL (должен совпадать с тем, как открываете сайт, и с TLS)
+      NUXT_DEV_ORIGIN: ${PUBLIC_BASE_URL:-https://localhost}
     depends_on:
       - backend
     networks:

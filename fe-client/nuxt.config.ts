@@ -1,13 +1,13 @@
 const dockerDev =
   process.env.NUXT_DOCKER_DEV === "1" || process.env.CHOKIDAR_USEPOLLING === "true";
 
-/** Публичный URL фронта за reverse-proxy (для dev за Apache :8080) */
-const devOrigin = process.env.NUXT_DEV_ORIGIN || "http://localhost:8080";
+/** Публичный URL фронта за reverse-proxy (TLS-терминация на Apache) */
+const devOrigin = process.env.NUXT_DEV_ORIGIN || "https://localhost";
 const devOriginUrl = (() => {
   try {
     return new URL(devOrigin);
   } catch {
-    return new URL("http://localhost:8080");
+    return new URL("https://localhost");
   }
 })();
 
@@ -28,7 +28,7 @@ export default defineNuxtConfig({
       allowedHosts: dockerDev ? true : undefined,
       hmr: dockerDev
         ? {
-            protocol: "ws",
+            protocol: devOriginUrl.protocol === "https:" ? "wss" : "ws",
             host: devOriginUrl.hostname,
             clientPort:
               devOriginUrl.port !== ""
