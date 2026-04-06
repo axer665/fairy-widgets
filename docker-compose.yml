@@ -7,7 +7,7 @@ services:
     volumes:
       # Изменения конфига: перезапуск прокси — docker compose restart proxy
       - ./proxy/httpd-vhosts.conf:/usr/local/apache2/conf/extra/httpd-vhosts.conf:ro
-      # Сертификаты: см. ssl/README.md (mylittlepony.crt, mylittlepony.key)
+      # Сертификаты: см. ssl/README.md (mylittlefairy.crt, mylittlefairy.key, chain.crt)
       - ./ssl:/usr/local/apache2/conf/ssl:ro
     depends_on:
       - backend

@@ -27,7 +27,7 @@ backend/vendor/
 backend/.phpunit.cache/
 backend/.php-cs-fixer.cache
 
-# --- TLS (кладите mylittlepony.crt / mylittlepony.key локально) ---
+# --- TLS: mylittlefairy.crt, mylittlefairy.key, chain.crt — только локально ---
 ssl/*.key
 ssl/*.crt
 ssl/*.pem

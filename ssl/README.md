@@ -1,32 +1,41 @@
 # TLS-сертификаты для reverse-proxy (Apache)
 
-В этой директории должны лежать два файла (имена фиксированы в конфиге Apache):
+В этой директории должны лежать **три файла** (имена заданы в `proxy/httpd-vhosts.conf`):
 
 | Файл | Назначение |
 |------|------------|
-| `mylittlepony.crt` | Сертификат (или цепочка: сертификат + промежуточные CA в одном файле в правильном порядке) |
-| `mylittlepony.key` | Приватный ключ (без пароля или настройте `SSLPassPhraseDialog` отдельно) |
+| `mylittlefairy.crt` | Сертификат вашего домена (leaf / end-entity), **без** цепочки УЦ |
+| `mylittlefairy.key` | Приватный ключ к этому сертификату (без пароля на диске или настройте `SSLPassPhraseDialog` отдельно) |
+| `chain.crt` | Цепочка доверия УЦ: **промежуточный(е)** сертификат(ы), затем при необходимости **корневой** (порядок: от выпускающего к корню). Обычно даётся файл «full chain» / «bundle» от регистратора, разбейте: leaf → `mylittlefairy.crt`, остальное → `chain.crt`. |
 
-После добавления файлов перезапустите прокси:
+В Apache это соответствует директивам:
+
+- `SSLCertificateFile` → `mylittlefairy.crt`
+- `SSLCertificateKeyFile` → `mylittlefairy.key`
+- `SSLCertificateChainFile` → `chain.crt`
+
+После добавления или замены файлов перезапустите прокси:
 
 ```bash
 docker compose restart proxy
 ```
 
-**Локальный самоподписанный сертификат (для проверки)**
+**Локальный самоподписанный сертификат (только для проверки)**
+
+У настоящей УЦ нет промежуточных — для старта Apache можно временно подставить тот же файл в цепочку:
 
 ```bash
 cd ssl
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout mylittlepony.key -out mylittlepony.crt \
+  -keyout mylittlefairy.key -out mylittlefairy.crt \
   -subj "/CN=localhost"
+cp mylittlefairy.crt chain.crt
 ```
 
 Браузер покажет предупреждение — это нормально для self-signed.
 
 **Важно**
 
-- Файлы **не коммитьте** в git (они в `.gitignore`).
-- `ServerName` в `proxy/httpd-vhosts.conf` должен совпадать с **CN/SAN** сертификата, иначе браузер будет ругаться на несовпадение имени.
-- Снаружи публикуются порты **80** (редирект 301 на HTTPS) и **443** (основной трафик). Публичный URL задайте переменной **`PUBLIC_BASE_URL`** (например `https://example.com`) в `.env` рядом с compose или в окружении — от неё зависят `APP_URL` у backend и `NUXT_DEV_ORIGIN` у fe-client в `docker-compose.yml`.
-- Раньше использовался порт **8080**; теперь по умолчанию **80/443**. Чтобы оставить нестандартные порты, задайте маппинг в `docker-compose.override.yml` (например `8080:80`, `8443:443`) и выставьте `PUBLIC_BASE_URL` с нужным портом.
+- Эти файлы **не коммитьте** в git (см. `.gitignore`).
+- `ServerName` в `proxy/httpd-vhosts.conf` должен совпадать с **CN/SAN** в `mylittlefairy.crt`.
+- Порты **80** (редирект на HTTPS) и **443**; публичный URL — **`PUBLIC_BASE_URL`** в `.env`.
