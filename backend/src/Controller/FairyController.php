@@ -29,8 +29,10 @@ final class FairyController
         }
         $pdo = $this->db->pdo();
         $st = $pdo->prepare(
-            'SELECT id, application_id, name, widget_token, standard_behavior, created_at
-             FROM widget_fairies WHERE application_id = ? ORDER BY id ASC',
+            'SELECT f.id, f.application_id, f.name, f.standard_behavior, f.created_at, a.widget_token
+             FROM widget_fairies f
+             INNER JOIN widget_applications a ON a.id = f.application_id
+             WHERE f.application_id = ? ORDER BY f.id ASC',
         );
         $st->execute([$appId]);
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -40,9 +42,14 @@ final class FairyController
             $r['id'] = $fid;
             $r['application_id'] = (int) $r['application_id'];
             $r['standard_behavior'] = (bool) (int) ($r['standard_behavior'] ?? 0);
-            $t = htmlspecialchars((string) $r['widget_token'], ENT_QUOTES, 'UTF-8');
-            $r['embed_snippet'] = '<script src="' . $base . '/widget-loader?token=' . $t . '"></script>';
+            $wt = (string) ($r['widget_token'] ?? '');
             unset($r['widget_token']);
+            if ($wt !== '') {
+                $t = htmlspecialchars($wt, ENT_QUOTES, 'UTF-8');
+                $r['embed_snippet'] = '<script src="' . $base . '/widget-loader?token=' . $t . '&fairy_id=' . $fid . '"></script>';
+            } else {
+                $r['embed_snippet'] = '';
+            }
             $es = $pdo->prepare(
                 'SELECT widget_event_id FROM fairy_events WHERE fairy_id = ? ORDER BY widget_event_id ASC',
             );
@@ -71,24 +78,30 @@ final class FairyController
         if (mb_strlen($name) > 128) {
             return Response::json(['error' => 'validation', 'message' => 'Имя до 128 символов'], 422);
         }
-        $token = bin2hex(random_bytes(24));
         $pdo = $this->db->pdo();
+        $tokRow = $pdo->prepare(
+            'SELECT widget_token FROM widget_applications WHERE id = ? AND status = ? LIMIT 1',
+        );
+        $tokRow->execute([$appId, 'approved']);
+        $wt = $tokRow->fetchColumn();
+        if ($wt === false || $wt === null || $wt === '') {
+            return Response::json(['error' => 'invalid_state', 'message' => 'Нет токена заявки'], 409);
+        }
         $pdo->prepare(
-            'INSERT INTO widget_fairies (application_id, name, widget_token, standard_behavior) VALUES (?,?,?,0)',
-        )->execute([$appId, $name, $token]);
+            'INSERT INTO widget_fairies (application_id, name, standard_behavior) VALUES (?,?,0)',
+        )->execute([$appId, $name]);
         $fairyId = (int) $pdo->lastInsertId();
         $pdo->prepare(
             'INSERT IGNORE INTO fairy_events (fairy_id, widget_event_id)
              SELECT ?, id FROM widget_events WHERE application_id = ?',
         )->execute([$fairyId, $appId]);
         $base = rtrim($this->appUrl, '/');
-        $t = htmlspecialchars($token, ENT_QUOTES, 'UTF-8');
+        $t = htmlspecialchars((string) $wt, ENT_QUOTES, 'UTF-8');
 
         return Response::json([
             'id' => $fairyId,
             'name' => $name,
-            'widget_token' => $token,
-            'embed_snippet' => '<script src="' . $base . '/widget-loader?token=' . $t . '"></script>',
+            'embed_snippet' => '<script src="' . $base . '/widget-loader?token=' . $t . '&fairy_id=' . $fairyId . '"></script>',
         ], 201);
     }
 

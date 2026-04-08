@@ -22,7 +22,7 @@ final class ApplicationController
     {
         $uid = (int) ($request->attributes['user_id'] ?? 0);
         $st = $this->db->pdo()->prepare(
-            'SELECT id, site_url, status, moderator_note, created_at, updated_at
+            'SELECT id, site_url, status, widget_token, moderator_note, created_at, updated_at
              FROM widget_applications WHERE user_id = ? ORDER BY id DESC',
         );
         $st->execute([$uid]);
@@ -32,17 +32,19 @@ final class ApplicationController
         foreach ($rows as &$r) {
             $r['id'] = (int) $r['id'];
             $r['fairies'] = [];
-            if ($r['status'] !== 'approved') {
+            if ($r['status'] !== 'approved' || empty($r['widget_token'])) {
+                unset($r['widget_token']);
                 continue;
             }
+            $appTok = htmlspecialchars((string) $r['widget_token'], ENT_QUOTES, 'UTF-8');
+            unset($r['widget_token']);
             $fst = $pdo->prepare(
-                'SELECT id, name, widget_token, standard_behavior FROM widget_fairies WHERE application_id = ? ORDER BY id ASC',
+                'SELECT id, name, standard_behavior FROM widget_fairies WHERE application_id = ? ORDER BY id ASC',
             );
             $fst->execute([(int) $r['id']]);
             $frows = $fst->fetchAll(PDO::FETCH_ASSOC);
             foreach ($frows as $fr) {
                 $fid = (int) $fr['id'];
-                $t = htmlspecialchars((string) $fr['widget_token'], ENT_QUOTES, 'UTF-8');
                 $es = $pdo->prepare(
                     'SELECT widget_event_id FROM fairy_events WHERE fairy_id = ? ORDER BY widget_event_id ASC',
                 );
@@ -52,7 +54,7 @@ final class ApplicationController
                     'id' => $fid,
                     'name' => $fr['name'],
                     'standard_behavior' => (bool) (int) ($fr['standard_behavior'] ?? 0),
-                    'embed_snippet' => '<script src="' . $base . '/widget-loader?token=' . $t . '"></script>',
+                    'embed_snippet' => '<script src="' . $base . '/widget-loader?token=' . $appTok . '&fairy_id=' . $fid . '"></script>',
                     'assigned_event_ids' => $assigned,
                 ];
             }

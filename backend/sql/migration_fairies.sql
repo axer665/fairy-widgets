@@ -1,5 +1,5 @@
 -- Миграция: феи, назначение событий, выполнения, журнал сбоев.
--- Выполните после бэкапа. Если в widget_applications ещё есть widget_token / standard_behavior — строки 1–2 создадут фей и перенесут токен.
+-- После бэкапа. Если токен был у каждой феи — затем выполните migration_app_token.sql (один токен на заявку, fairy_id в URL).
 
 CREATE TABLE IF NOT EXISTS widget_fairies (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

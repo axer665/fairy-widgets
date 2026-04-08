@@ -30,11 +30,11 @@ final class TrackController
             return Response::json(['error' => 'validation'], 422);
         }
         $st = $this->db->pdo()->prepare(
-            'SELECT f.application_id FROM widget_fairies f
-             INNER JOIN widget_applications a ON a.id = f.application_id
-             WHERE f.id = ? AND f.widget_token = ? AND f.application_id = ? AND a.status = ? LIMIT 1',
+            'SELECT a.id FROM widget_applications a
+             INNER JOIN widget_fairies f ON f.application_id = a.id AND f.id = ?
+             WHERE a.id = ? AND a.widget_token = ? AND a.status = ? LIMIT 1',
         );
-        $st->execute([$fairyId, $token, $appIdBody, 'approved']);
+        $st->execute([$fairyId, $appIdBody, $token, 'approved']);
         $row = $st->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
             return Response::json(['error' => 'forbidden'], 403);

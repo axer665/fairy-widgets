@@ -35,10 +35,11 @@ final class WidgetController
                 'Content-Type' => 'application/javascript; charset=utf-8',
             ]);
         }
-        $ctx = $this->getApprovedFairyForEmbed($request, $token);
+        $fairyIdQ = isset($request->query['fairy_id']) ? (int) $request->query['fairy_id'] : 0;
+        $ctx = $this->resolveEmbedContext($request, $token, $fairyIdQ > 0 ? $fairyIdQ : null);
         if ($ctx === null) {
             return Response::text(
-                'console.error("widget: invalid token or host mismatch");',
+                'console.error("widget: invalid token, fairy_id or host mismatch");',
                 403,
                 ['Content-Type' => 'application/javascript; charset=utf-8'],
             );
@@ -64,10 +65,11 @@ final class WidgetController
         $token = trim((string) ($b['token'] ?? ''));
         $kind = trim((string) ($b['kind'] ?? ''));
         $eventKey = trim((string) ($b['event_key'] ?? ''));
-        if ($token === '') {
-            return Response::json(['error' => 'validation'], 422);
+        $fairyIdBody = isset($b['fairy_id']) ? (int) $b['fairy_id'] : 0;
+        if ($token === '' || $fairyIdBody < 1) {
+            return Response::json(['error' => 'validation', 'message' => 'token и fairy_id обязательны'], 422);
         }
-        $ctx = $this->getApprovedFairyForEmbed($request, $token);
+        $ctx = $this->resolveEmbedContext($request, $token, $fairyIdBody);
         if ($ctx === null) {
             return Response::json(['error' => 'forbidden'], 403);
         }
@@ -92,10 +94,11 @@ final class WidgetController
         }
         $token = trim((string) ($b['token'] ?? ''));
         $executionId = isset($b['execution_id']) ? (int) $b['execution_id'] : 0;
-        if ($token === '' || $executionId < 1) {
-            return Response::json(['error' => 'validation'], 422);
+        $fairyIdBody = isset($b['fairy_id']) ? (int) $b['fairy_id'] : 0;
+        if ($token === '' || $executionId < 1 || $fairyIdBody < 1) {
+            return Response::json(['error' => 'validation', 'message' => 'token, fairy_id и execution_id обязательны'], 422);
         }
-        $ctx = $this->getApprovedFairyForEmbed($request, $token);
+        $ctx = $this->resolveEmbedContext($request, $token, $fairyIdBody);
         if ($ctx === null) {
             return Response::json(['error' => 'forbidden'], 403);
         }
@@ -149,16 +152,28 @@ final class WidgetController
     }
 
     /** @return array<string, mixed>|null */
-    private function getApprovedFairyForEmbed(Request $request, string $token): ?array
+    private function resolveEmbedContext(Request $request, string $appToken, ?int $fairyId): ?array
     {
-        $st = $this->db->pdo()->prepare(
-            'SELECT f.id AS fairy_id, f.application_id, f.standard_behavior, f.widget_token,
-                    a.site_url, a.status
-             FROM widget_fairies f
-             INNER JOIN widget_applications a ON a.id = f.application_id
-             WHERE f.widget_token = ? AND a.status = ? LIMIT 1',
-        );
-        $st->execute([$token, 'approved']);
+        $pdo = $this->db->pdo();
+        if ($fairyId !== null && $fairyId > 0) {
+            $st = $pdo->prepare(
+                'SELECT f.id AS fairy_id, f.application_id, f.standard_behavior, a.site_url, a.status
+                 FROM widget_fairies f
+                 INNER JOIN widget_applications a ON a.id = f.application_id
+                 WHERE a.widget_token = ? AND a.status = ? AND f.id = ? LIMIT 1',
+            );
+            $st->execute([$appToken, 'approved', $fairyId]);
+        } else {
+            $st = $pdo->prepare(
+                'SELECT f.id AS fairy_id, f.application_id, f.standard_behavior, a.site_url, a.status
+                 FROM widget_fairies f
+                 INNER JOIN widget_applications a ON a.id = f.application_id
+                 WHERE a.widget_token = ? AND a.status = ?
+                 ORDER BY f.id ASC
+                 LIMIT 1',
+            );
+            $st->execute([$appToken, 'approved']);
+        }
         $row = $st->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
             return null;
@@ -571,7 +586,7 @@ final class WidgetController
     });
   }
   function completeExecution(executionId){
-    postJson("/api/widget/event-complete", { token: TOKEN, execution_id: executionId }).catch(function(){});
+    postJson("/api/widget/event-complete", { token: TOKEN, fairy_id: FAIRY_ID, execution_id: executionId }).catch(function(){});
   }
   function runFairySequence(phrase, spriteOk, introMs, executionId){
     introMs = introMs || 0;
@@ -687,7 +702,7 @@ final class WidgetController
       console.error("myLittleFairyWidget.show: передайте ключ события (строка), см. кабинет");
       return;
     }
-    beginAndPlay({ token: TOKEN, event_key: key }, function(){
+    beginAndPlay({ token: TOKEN, fairy_id: FAIRY_ID, event_key: key }, function(){
       console.warn("myLittleFairyWidget: событие не выполнено (фея занята, событие у другой феи и т.д.) — см. кабинет");
     });
   }
@@ -700,7 +715,7 @@ final class WidgetController
       preloadImage(SPRITE_URL, function(){
         autoTimer = setTimeout(function(){
           autoTimer = null;
-          beginAndPlay({ token: TOKEN, kind: "standard" }, function(){});
+          beginAndPlay({ token: TOKEN, fairy_id: FAIRY_ID, kind: "standard" }, function(){});
         }, WAIT_BEFORE_FLY_MS);
       });
     }

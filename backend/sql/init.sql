@@ -12,6 +12,7 @@ CREATE TABLE widget_applications (
   user_id INT UNSIGNED NOT NULL,
   site_url VARCHAR(2048) NOT NULL,
   status ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'pending',
+  widget_token VARCHAR(64) NULL UNIQUE,
   moderator_note VARCHAR(512) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -23,13 +24,11 @@ CREATE TABLE widget_fairies (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   application_id INT UNSIGNED NOT NULL,
   name VARCHAR(128) NOT NULL DEFAULT 'Фея',
-  widget_token VARCHAR(64) NOT NULL,
   standard_behavior TINYINT(1) NOT NULL DEFAULT 0,
   current_execution_id BIGINT UNSIGNED NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (application_id) REFERENCES widget_applications(id) ON DELETE CASCADE,
-  UNIQUE KEY uq_widget_token (widget_token),
   INDEX idx_app (application_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

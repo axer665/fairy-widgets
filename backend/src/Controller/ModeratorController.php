@@ -19,8 +19,7 @@ final class ModeratorController
     public function list(Request $request): Response
     {
         $st = $this->db->pdo()->query(
-            'SELECT a.id, a.user_id, a.site_url, a.status, a.moderator_note, a.created_at, u.login AS user_login,
-                    (SELECT f.widget_token FROM widget_fairies f WHERE f.application_id = a.id ORDER BY f.id LIMIT 1) AS widget_token
+            'SELECT a.id, a.user_id, a.site_url, a.status, a.widget_token, a.moderator_note, a.created_at, u.login AS user_login
              FROM widget_applications a
              JOIN users u ON u.id = a.user_id
              ORDER BY a.id DESC',
@@ -53,12 +52,12 @@ final class ModeratorController
         }
         $token = bin2hex(random_bytes(24));
         $up = $pdo->prepare(
-            'UPDATE widget_applications SET status = ?, moderator_note = NULL WHERE id = ?',
+            'UPDATE widget_applications SET status = ?, widget_token = ?, moderator_note = NULL WHERE id = ?',
         );
-        $up->execute(['approved', $id]);
+        $up->execute(['approved', $token, $id]);
         $pdo->prepare(
-            'INSERT INTO widget_fairies (application_id, name, widget_token, standard_behavior) VALUES (?,?,?,0)',
-        )->execute([$id, 'Фея', $token]);
+            'INSERT INTO widget_fairies (application_id, name, standard_behavior) VALUES (?,?,0)',
+        )->execute([$id, 'Фея']);
 
         return Response::json(['ok' => true, 'id' => $id, 'widget_token' => $token]);
     }
