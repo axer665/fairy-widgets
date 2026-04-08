@@ -76,7 +76,7 @@ final class WidgetController
   var SPRITE_H = 106;
   var WIDGET_W = 180;
   var START_RIGHT = -220;
-  var FLY_IN_RIGHT = 300;
+  var FLY_IN_RIGHT = 250;
   var FLY_MS = 900;
   var MESSAGE_DELAY_MS = 5000;
   var REMOVE_DELAY_MS = 5000;
