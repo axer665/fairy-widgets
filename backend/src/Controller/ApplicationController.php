@@ -39,10 +39,17 @@ final class ApplicationController
             $appTok = htmlspecialchars((string) $r['widget_token'], ENT_QUOTES, 'UTF-8');
             unset($r['widget_token']);
             $r['embed_snippet'] = '<script src="' . $base . '/widget-loader?token=' . $appTok . '"></script>';
-            $fst = $pdo->prepare(
-                'SELECT id, name, standard_behavior FROM widget_fairies WHERE application_id = ? ORDER BY id ASC',
+            $appId = (int) $r['id'];
+            $stdSt = $pdo->prepare(
+                'SELECT id FROM widget_events WHERE application_id = ? AND event_key = ? LIMIT 1',
             );
-            $fst->execute([(int) $r['id']]);
+            $stdSt->execute([$appId, '_standard']);
+            $stdCol = $stdSt->fetchColumn();
+            $stdEventId = $stdCol !== false ? (int) $stdCol : 0;
+            $fst = $pdo->prepare(
+                'SELECT id, name FROM widget_fairies WHERE application_id = ? ORDER BY id ASC',
+            );
+            $fst->execute([$appId]);
             $frows = $fst->fetchAll(PDO::FETCH_ASSOC);
             foreach ($frows as $fr) {
                 $fid = (int) $fr['id'];
@@ -54,7 +61,7 @@ final class ApplicationController
                 $r['fairies'][] = [
                     'id' => $fid,
                     'name' => $fr['name'],
-                    'standard_behavior' => (bool) (int) ($fr['standard_behavior'] ?? 0),
+                    'standard_behavior' => $stdEventId > 0 && in_array($stdEventId, $assigned, true),
                     'assigned_event_ids' => $assigned,
                 ];
             }

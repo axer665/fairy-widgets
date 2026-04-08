@@ -27,8 +27,14 @@ final class FairyController
             return Response::json(['error' => 'forbidden'], 403);
         }
         $pdo = $this->db->pdo();
+        $stdSt = $pdo->prepare(
+            'SELECT id FROM widget_events WHERE application_id = ? AND event_key = ? LIMIT 1',
+        );
+        $stdSt->execute([$appId, '_standard']);
+        $stdCol = $stdSt->fetchColumn();
+        $stdEventId = $stdCol !== false ? (int) $stdCol : 0;
         $st = $pdo->prepare(
-            'SELECT id, application_id, name, standard_behavior, created_at FROM widget_fairies WHERE application_id = ? ORDER BY id ASC',
+            'SELECT id, application_id, name, created_at FROM widget_fairies WHERE application_id = ? ORDER BY id ASC',
         );
         $st->execute([$appId]);
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
@@ -36,12 +42,13 @@ final class FairyController
             $fid = (int) $r['id'];
             $r['id'] = $fid;
             $r['application_id'] = (int) $r['application_id'];
-            $r['standard_behavior'] = (bool) (int) ($r['standard_behavior'] ?? 0);
             $es = $pdo->prepare(
                 'SELECT widget_event_id FROM fairy_events WHERE fairy_id = ? ORDER BY widget_event_id ASC',
             );
             $es->execute([$fid]);
-            $r['assigned_event_ids'] = array_map('intval', $es->fetchAll(PDO::FETCH_COLUMN));
+            $assigned = array_map('intval', $es->fetchAll(PDO::FETCH_COLUMN));
+            $r['standard_behavior'] = $stdEventId > 0 && in_array($stdEventId, $assigned, true);
+            $r['assigned_event_ids'] = $assigned;
         }
         unset($r);
         return Response::json(['fairies' => $rows]);
@@ -117,19 +124,51 @@ final class FairyController
         if (array_key_exists('standard_behavior', $b)) {
             $sb = $b['standard_behavior'];
             $val = is_bool($sb) ? $sb : (bool) (int) $sb;
+            $appIdForFairy = (int) $fairy['application_id'];
+            $pdo->prepare(
+                'INSERT INTO widget_events (application_id, event_key, phrase) VALUES (?,?,?)
+                 ON DUPLICATE KEY UPDATE id = id',
+            )->execute([$appIdForFairy, '_standard', 'Привет! Я фея виджета.']);
+            $wst = $pdo->prepare(
+                'SELECT id FROM widget_events WHERE application_id = ? AND event_key = ? LIMIT 1',
+            );
+            $wst->execute([$appIdForFairy, '_standard']);
+            $weId = (int) $wst->fetchColumn();
+            if ($weId > 0) {
+                if ($val) {
+                    $pdo->prepare(
+                        'INSERT IGNORE INTO fairy_events (fairy_id, widget_event_id) VALUES (?,?)',
+                    )->execute([$id, $weId]);
+                } else {
+                    $pdo->prepare(
+                        'DELETE FROM fairy_events WHERE fairy_id = ? AND widget_event_id = ?',
+                    )->execute([$id, $weId]);
+                }
+            }
             $pdo->prepare('UPDATE widget_fairies SET standard_behavior = ? WHERE id = ?')->execute([(int) $val, $id]);
         }
+        $stdSt = $pdo->prepare(
+            'SELECT id FROM widget_events WHERE application_id = ? AND event_key = ? LIMIT 1',
+        );
+        $stdSt->execute([(int) $fairy['application_id'], '_standard']);
+        $stdCol = $stdSt->fetchColumn();
+        $stdEventId = $stdCol !== false ? (int) $stdCol : 0;
         $st = $pdo->prepare(
-            'SELECT id, name, standard_behavior FROM widget_fairies WHERE id = ? LIMIT 1',
+            'SELECT id, name FROM widget_fairies WHERE id = ? LIMIT 1',
         );
         $st->execute([$id]);
         $row = $st->fetch(PDO::FETCH_ASSOC);
+        $as = $pdo->prepare(
+            'SELECT widget_event_id FROM fairy_events WHERE fairy_id = ? AND widget_event_id = ? LIMIT 1',
+        );
+        $as->execute([$id, $stdEventId > 0 ? $stdEventId : 0]);
+        $hasStd = $stdEventId > 0 && (bool) $as->fetchColumn();
 
         return Response::json([
             'ok' => true,
             'id' => (int) $row['id'],
             'name' => $row['name'],
-            'standard_behavior' => (bool) (int) $row['standard_behavior'],
+            'standard_behavior' => $hasStd,
         ]);
     }
 
@@ -174,6 +213,16 @@ final class FairyController
         foreach ($ids as $eid) {
             $ins->execute([$id, $eid]);
         }
+        $stdSt = $pdo->prepare(
+            'SELECT id FROM widget_events WHERE application_id = ? AND event_key = ? LIMIT 1',
+        );
+        $stdSt->execute([$appId, '_standard']);
+        $stdCol = $stdSt->fetchColumn();
+        $stdEventId = $stdCol !== false ? (int) $stdCol : 0;
+        $pdo->prepare('UPDATE widget_fairies SET standard_behavior = ? WHERE id = ?')->execute([
+            $stdEventId > 0 && in_array($stdEventId, $ids, true) ? 1 : 0,
+            $id,
+        ]);
 
         return Response::json(['ok' => true, 'event_ids' => $ids]);
     }

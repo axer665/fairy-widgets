@@ -58,6 +58,10 @@ final class ModeratorController
         $pdo->prepare(
             'INSERT INTO widget_fairies (application_id, name, standard_behavior) VALUES (?,?,0)',
         )->execute([$id, 'Фея']);
+        $pdo->prepare(
+            'INSERT INTO widget_events (application_id, event_key, phrase) VALUES (?,?,?)
+             ON DUPLICATE KEY UPDATE id = id',
+        )->execute([$id, '_standard', 'Привет! Я фея виджета.']);
 
         return Response::json(['ok' => true, 'id' => $id, 'widget_token' => $token]);
     }

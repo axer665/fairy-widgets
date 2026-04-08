@@ -22,6 +22,9 @@ final class WidgetController
     public const REASON_STANDARD_DISABLED = 'standard_not_enabled';
     public const REASON_ALL_FAIRIES_BUSY = 'all_fairies_busy';
 
+    /** Зарезервированный ключ: то же событие, что и остальные; авто после загрузки, если назначено фее. */
+    private const STANDARD_EVENT_KEY = '_standard';
+
     public function __construct(
         private readonly Database $db,
         private readonly string $appUrl,
@@ -48,11 +51,14 @@ final class WidgetController
         $apiBase = $this->appUrl;
         $appId = (int) $appRow['application_id'];
         $chk = $this->db->pdo()->prepare(
-            'SELECT 1 FROM widget_fairies WHERE application_id = ? AND standard_behavior = 1 LIMIT 1',
+            'SELECT 1 FROM widget_fairies f
+             INNER JOIN fairy_events fe ON fe.fairy_id = f.id
+             INNER JOIN widget_events we ON we.id = fe.widget_event_id AND we.event_key = ?
+             WHERE f.application_id = ? LIMIT 1',
         );
-        $chk->execute([$appId]);
-        $standardBehavior = (bool) $chk->fetchColumn();
-        $js = $this->buildWidgetJs($apiBase, $token, $standardBehavior);
+        $chk->execute([self::STANDARD_EVENT_KEY, $appId]);
+        $autoStandardWelcome = (bool) $chk->fetchColumn();
+        $js = $this->buildWidgetJs($apiBase, $token, $autoStandardWelcome);
         return Response::text($js, 200, [
             'Content-Type' => 'application/javascript; charset=utf-8',
             'Cache-Control' => 'no-store',
@@ -66,7 +72,6 @@ final class WidgetController
             return Response::json(['error' => 'invalid_json'], 400);
         }
         $token = trim((string) ($b['token'] ?? ''));
-        $kind = trim((string) ($b['kind'] ?? ''));
         $eventKey = trim((string) ($b['event_key'] ?? ''));
         if ($token === '') {
             return Response::json(['error' => 'validation', 'message' => 'token обязателен'], 422);
@@ -77,9 +82,6 @@ final class WidgetController
         }
         $appId = (int) $appRow['application_id'];
 
-        if ($kind === 'standard') {
-            return $this->beginStandardForApplication($appId);
-        }
         if ($eventKey === '' || !preg_match('/^[a-zA-Z0-9_-]{1,64}$/', $eventKey)) {
             return Response::json(['error' => 'validation'], 422);
         }
@@ -182,75 +184,6 @@ final class WidgetController
         $id = $st->fetchColumn();
 
         return $id !== false ? (int) $id : 0;
-    }
-
-    private function beginStandardForApplication(int $appId): Response
-    {
-        $pdo = $this->db->pdo();
-        $logFairy = $this->firstFairyIdForLog($pdo, $appId);
-        if ($logFairy < 1) {
-            return Response::json(['error' => 'not_found'], 404);
-        }
-        $st = $pdo->prepare(
-            'SELECT id FROM widget_fairies WHERE application_id = ? AND standard_behavior = 1 ORDER BY id ASC',
-        );
-        $st->execute([$appId]);
-        /** @var list<int|string> $candidates */
-        $candidates = $st->fetchAll(PDO::FETCH_COLUMN);
-        if ($candidates === []) {
-            return Response::json(['error' => 'forbidden', 'reason' => self::REASON_STANDARD_DISABLED], 403);
-        }
-        $defaultPhrase = 'Привет! Я фея виджета.';
-        foreach ($candidates as $fidRaw) {
-            $fairyId = (int) $fidRaw;
-            try {
-                $pdo->beginTransaction();
-                $this->releaseStaleExecution($pdo, $fairyId);
-                $fst = $pdo->prepare(
-                    'SELECT id, current_execution_id FROM widget_fairies WHERE id = ? FOR UPDATE',
-                );
-                $fst->execute([$fairyId]);
-                $fairy = $fst->fetch(PDO::FETCH_ASSOC);
-                if (!$fairy) {
-                    $pdo->rollBack();
-                    continue;
-                }
-                if (!empty($fairy['current_execution_id'])) {
-                    $pdo->rollBack();
-                    continue;
-                }
-                $pdo->prepare(
-                    'INSERT INTO widget_event_executions (fairy_id, widget_event_id, kind) VALUES (?,?,?)',
-                )->execute([$fairyId, null, 'standard']);
-                $execId = (int) $pdo->lastInsertId();
-                $pdo->prepare(
-                    'UPDATE widget_fairies SET current_execution_id = ? WHERE id = ?',
-                )->execute([$execId, $fairyId]);
-                $pdo->commit();
-
-                return Response::json([
-                    'execution_id' => $execId,
-                    'phrase' => $defaultPhrase,
-                ]);
-            } catch (PDOException) {
-                if ($pdo->inTransaction()) {
-                    $pdo->rollBack();
-                }
-            }
-        }
-        $firstStd = (int) $candidates[0];
-        $this->insertFailure(
-            $pdo,
-            $appId,
-            $firstStd,
-            null,
-            '_standard',
-            self::REASON_ALL_FAIRIES_BUSY,
-            'Все феи со включённым стандартным приветствием заняты',
-            null,
-        );
-
-        return Response::json(['error' => 'conflict', 'reason' => self::REASON_ALL_FAIRIES_BUSY], 409);
     }
 
     private function beginEventForApplication(int $appId, string $eventKey): Response
@@ -423,7 +356,7 @@ final class WidgetController
         ?int $attemptedWidgetEventId = null,
     ): void {
         $bst = $pdo->prepare(
-            'SELECT fairy_id, widget_event_id, kind FROM widget_event_executions WHERE id = ? LIMIT 1',
+            'SELECT fairy_id, widget_event_id FROM widget_event_executions WHERE id = ? LIMIT 1',
         );
         $bst->execute([$blockerExecutionId]);
         $b = $bst->fetch(PDO::FETCH_ASSOC);
@@ -431,7 +364,7 @@ final class WidgetController
             return;
         }
         $bk = $this->blockerEventKey($pdo, $blockerExecutionId);
-        $detail = $b['kind'] === 'standard'
+        $detail = ($bk === self::STANDARD_EVENT_KEY)
             ? 'Фея выполняла стандартное приветствие'
             : ('Фея выполняла событие' . ($bk !== null && $bk !== '' ? ' «' . $bk . '»' : ''));
         $this->insertFailure(
@@ -516,18 +449,17 @@ final class WidgetController
     private function buildWidgetJs(
         string $apiBase,
         string $widgetToken,
-        bool $standardBehavior,
+        bool $autoStandardWelcome,
     ): string {
         $api = addslashes($apiBase);
         $tok = addslashes($widgetToken);
-        $stdJs = $standardBehavior ? 'true' : 'false';
-        $defaultPhrase = addslashes('Привет! Я фея виджета.');
+        $stdJs = $autoStandardWelcome ? 'true' : 'false';
         return <<<JS
 (function(){
   var API = "{$api}";
   var TOKEN = "{$tok}";
-  var STANDARD_BEHAVIOR = {$stdJs};
-  var DEFAULT_PHRASE = "{$defaultPhrase}";
+  var AUTO_STANDARD_WELCOME = {$stdJs};
+  var STANDARD_EVENT_KEY = "_standard";
   var WAIT_BEFORE_FLY_MS = 10000;
   var SPRITE_URL = API + "/widget/fairy-sprite.png";
   var FRAME_W = 128;
@@ -537,7 +469,7 @@ final class WidgetController
   var SPRITE_H = 106;
   var WIDGET_W = 180;
   var WIDGET_H = 170;
-  var FLY_FROM_RIGHT_OVERFLOW = 220;
+  var FLY_FROM_RIGHT_OVERFLOW = 320;
   var FLY_FROM_BOTTOM = 0;
   var FLY_TO_RIGHT_INSET = 150;
   var FLY_TO_BOTTOM = 130;
@@ -600,8 +532,9 @@ final class WidgetController
     host.setAttribute("data-widget", "ok");
     var pStart = flyFromXY();
     host.style.cssText =
-      "position:fixed;left:" + pStart.x + "px;top:" + pStart.y + "px;right:auto;bottom:auto;" +
-      "z-index:2147483647;width:" + WIDGET_W + "px;height:" + WIDGET_H + "px;pointer-events:none;opacity:1;";
+      "position:fixed;right:auto;bottom:auto;" +
+      "z-index:2147483647;width:" + WIDGET_W + "px;height:" + WIDGET_H + "px;pointer-events:none;opacity:1;" +
+      "transition:none;will-change:left,top;";
 
     var fairy = document.createElement("div");
     var fairyBg =
@@ -635,12 +568,21 @@ final class WidgetController
       }, 85);
     }
 
-    function setHostXY(x, y){
-      host.style.transition = "left " + FLY_MS + "ms ease-in-out, top " + FLY_MS + "ms ease-in-out";
-      requestAnimationFrame(function(){
+    function setHostXY(x, y, animate){
+      if (animate) {
+        host.style.transition = "left " + FLY_MS + "ms ease-in-out, top " + FLY_MS + "ms ease-in-out";
+        requestAnimationFrame(function(){
+          requestAnimationFrame(function(){
+            host.style.left = x + "px";
+            host.style.top = y + "px";
+          });
+        });
+      } else {
+        host.style.transition = "none";
         host.style.left = x + "px";
         host.style.top = y + "px";
-      });
+        void host.offsetWidth;
+      }
     }
 
     function showBubble(){
@@ -659,16 +601,17 @@ final class WidgetController
       completeExecution(executionId);
     }
 
+    setHostXY(pStart.x, pStart.y, false);
     setTimeout(function(){
       var pEnd = flyToXY();
-      setHostXY(pEnd.x, pEnd.y);
+      setHostXY(pEnd.x, pEnd.y, true);
       setTimeout(function(){
         showBubble();
         setTimeout(function(){
           hideBubble();
           fairy.style.transform = "scaleX(-1)";
           var pBack = flyFromXY();
-          setHostXY(pBack.x, pBack.y);
+          setHostXY(pBack.x, pBack.y, true);
           setTimeout(function(){
             setTimeout(destroy, REMOVE_DELAY_MS);
           }, FLY_MS);
@@ -715,12 +658,12 @@ final class WidgetController
   function boot(){
     track();
     if (window.myLittleFairyWidget) return;
-    window.myLittleFairyWidget = { show: show, version: "3" };
-    if (STANDARD_BEHAVIOR) {
+    window.myLittleFairyWidget = { show: show, version: "4" };
+    if (AUTO_STANDARD_WELCOME) {
       preloadImage(SPRITE_URL, function(){
         autoTimer = setTimeout(function(){
           autoTimer = null;
-          beginAndPlay({ token: TOKEN, kind: "standard" }, function(){});
+          beginAndPlay({ token: TOKEN, event_key: STANDARD_EVENT_KEY }, function(){});
         }, WAIT_BEFORE_FLY_MS);
       });
     }

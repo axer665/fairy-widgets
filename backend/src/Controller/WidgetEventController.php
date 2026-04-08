@@ -26,6 +26,7 @@ final class WidgetEventController
         if (!$this->ownsApplication($appId, $uid)) {
             return Response::json(['error' => 'forbidden'], 403);
         }
+        $this->ensureStandardWelcomeEvent($appId);
         $st = $this->db->pdo()->prepare(
             'SELECT id, event_key, phrase, created_at, updated_at FROM widget_events
              WHERE application_id = ? ORDER BY id ASC',
@@ -90,6 +91,23 @@ final class WidgetEventController
         $params = $request->attributes['route_params'] ?? [];
 
         return (int) ($params['id'] ?? 0);
+    }
+
+    /** Системное событие `_standard` + перенос legacy standard_behavior → fairy_events. */
+    private function ensureStandardWelcomeEvent(int $applicationId): void
+    {
+        $pdo = $this->db->pdo();
+        $pdo->prepare(
+            'INSERT INTO widget_events (application_id, event_key, phrase) VALUES (?,?,?)
+             ON DUPLICATE KEY UPDATE id = id',
+        )->execute([$applicationId, '_standard', 'Привет! Я фея виджета.']);
+        $pdo->prepare(
+            'INSERT IGNORE INTO fairy_events (fairy_id, widget_event_id)
+             SELECT f.id, we.id
+             FROM widget_fairies f
+             INNER JOIN widget_events we ON we.application_id = f.application_id AND we.event_key = ?
+             WHERE f.application_id = ? AND f.standard_behavior = 1',
+        )->execute(['_standard', $applicationId]);
     }
 
     private function ownsApplication(int $applicationId, int $userId): bool
