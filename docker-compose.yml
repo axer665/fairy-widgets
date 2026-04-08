@@ -62,6 +62,21 @@ services:
     networks:
       - app
 
+  # Веб-интерфейс к MySQL: http://localhost:${PHPMYADMIN_PORT:-8081} (логин — widget или root из .env)
+  phpmyadmin:
+    image: phpmyadmin:5.2
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_ABSOLUTE_URI: ${PHPMYADMIN_ABSOLUTE_URI:-http://localhost:8081/}
+    ports:
+      - "${PHPMYADMIN_PORT:-8081}:80"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - app
+
   # Dev: исходники с хоста + nuxt dev (HMR). Том node_modules — чтобы не затирать зависимости биндом.
   fe-client:
     image: node:22-bookworm-slim
