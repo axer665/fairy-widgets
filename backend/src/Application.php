@@ -9,10 +9,12 @@ use App\Controller\AuthController;
 use App\Controller\ModeratorController;
 use App\Controller\TrackController;
 use App\Controller\WidgetController;
+use App\Controller\WidgetEventController;
 use App\Http\Request;
 use App\Http\Response;
 use App\Middleware\AuthMiddleware;
 use App\Middleware\CorsTrackMiddleware;
+use App\Middleware\CorsWidgetPublicMiddleware;
 use App\Middleware\JsonBodyMiddleware;
 use App\Middleware\ModeratorAuthMiddleware;
 use App\Middleware\RequestLogMiddleware;
@@ -41,6 +43,7 @@ final class Application
         $appCtrl = new ApplicationController($this->db, $appUrl);
         $modCtrl = new ModeratorController($this->db);
         $widgetCtrl = new WidgetController($this->db, $appUrl);
+        $widgetEventCtrl = new WidgetEventController($this->db);
         $trackCtrl = new TrackController($this->db);
 
         $this->router->add('POST', '/api/register', $authCtrl->register(...), [$json, $log]);
@@ -49,6 +52,18 @@ final class Application
         $this->router->add('GET', '/api/me', $authCtrl->me(...), [$json, $auth, $log]);
         $this->router->add('GET', '/api/applications', $appCtrl->list(...), [$json, $auth, $log]);
         $this->router->add('POST', '/api/applications', $appCtrl->create(...), [$json, $auth, $log]);
+        $this->router->add(
+            'GET',
+            '/api/applications/{id}/events',
+            $widgetEventCtrl->list(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'POST',
+            '/api/applications/{id}/events',
+            $widgetEventCtrl->create(...),
+            [$json, $auth, $log],
+        );
 
         $this->router->add('GET', '/api/mod/applications', $modCtrl->list(...), [$json, $modAuth, $log]);
         $this->router->add(
@@ -84,6 +99,12 @@ final class Application
             '/api/track',
             $trackCtrl->track(...),
             [new CorsTrackMiddleware(), $json],
+        );
+        $this->router->add(
+            ['GET', 'OPTIONS'],
+            '/api/widget/event-phrase',
+            $widgetCtrl->eventPhrase(...),
+            [new CorsWidgetPublicMiddleware()],
         );
     }
 }

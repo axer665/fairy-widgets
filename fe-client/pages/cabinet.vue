@@ -25,6 +25,22 @@
         <div v-if="a.embed_snippet" class="embed">
           <p>Код для сайта:</p>
           <pre>{{ a.embed_snippet }}</pre>
+          <p v-if="a.widget_call_hint" class="hint">{{ a.widget_call_hint }}</p>
+        </div>
+        <div v-if="a.status === 'approved'" class="events card-inner">
+          <h3>События феи</h3>
+          <p class="muted small">Ключ (латиница, цифры, _ и -) передаётся в <code>myLittleFairyWidget.show("ключ")</code></p>
+          <ul v-if="a.events?.length" class="evlist">
+            <li v-for="e in a.events" :key="e.id">
+              <code>{{ e.event_key }}</code> — {{ e.phrase }}
+            </li>
+          </ul>
+          <p v-else class="muted small">Пока нет событий</p>
+          <form class="evform" @submit.prevent="addEvent(a)">
+            <input v-model="eventForms[a.id].key" placeholder="ключ, напр. promo" pattern="[a-zA-Z0-9_-]{1,64}" required />
+            <textarea v-model="eventForms[a.id].phrase" placeholder="Текст для феи" rows="2" required />
+            <button type="submit" class="btn primary sm" :disabled="eventPending[a.id]">Добавить / обновить</button>
+          </form>
         </div>
       </li>
     </ul>
@@ -38,12 +54,20 @@ definePageMeta({
   middleware: "auth",
 });
 
+type WidgetEventRow = {
+  id: number;
+  event_key: string;
+  phrase: string;
+};
+
 type AppRow = {
   id: number;
   site_url: string;
   status: string;
   embed_snippet: string | null;
+  widget_call_hint: string | null;
   moderator_note: string | null;
+  events?: WidgetEventRow[];
 };
 
 const { api } = useApi();
@@ -53,6 +77,12 @@ const siteUrl = ref("");
 const loadError = ref("");
 const createError = ref("");
 const createPending = ref(false);
+const eventForms = ref<Record<number, { key: string; phrase: string }>>({});
+const eventPending = ref<Record<number, boolean>>({});
+
+function ensureEventForm(id: number) {
+  if (!eventForms.value[id]) eventForms.value[id] = { key: "", phrase: "" };
+}
 
 function statusLabel(s: string) {
   if (s === "pending") return "На модерации";
@@ -66,8 +96,38 @@ async function load() {
   try {
     const res = await api<{ applications: AppRow[] }>("/api/applications", { method: "GET" });
     apps.value = res.applications;
+    for (const a of apps.value) {
+      ensureEventForm(a.id);
+      if (a.status !== "approved") continue;
+      try {
+        const ev = await api<{ events: WidgetEventRow[] }>(`/api/applications/${a.id}/events`, { method: "GET" });
+        a.events = ev.events;
+      } catch {
+        a.events = [];
+      }
+    }
   } catch {
     loadError.value = "Не удалось загрузить заявки";
+  }
+}
+
+async function addEvent(a: AppRow) {
+  ensureEventForm(a.id);
+  const f = eventForms.value[a.id];
+  if (!f.key.trim() || !f.phrase.trim()) return;
+  eventPending.value[a.id] = true;
+  try {
+    await api(`/api/applications/${a.id}/events`, {
+      method: "POST",
+      body: JSON.stringify({ event_key: f.key.trim(), phrase: f.phrase.trim() }),
+    });
+    f.key = "";
+    f.phrase = "";
+    await load();
+  } catch {
+    /* handled by api */
+  } finally {
+    eventPending.value[a.id] = false;
   }
 }
 
@@ -166,6 +226,68 @@ input {
   overflow-x: auto;
   font-size: 0.8rem;
   border: 1px solid #2e3238;
+}
+.embed .hint {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  color: #9aa0a6;
+}
+.card-inner {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #2e3238;
+}
+.card-inner h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+.muted.small {
+  font-size: 0.82rem;
+  margin: 0 0 10px;
+}
+.evlist {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  font-size: 0.88rem;
+  color: #bdc1c6;
+}
+.evlist li {
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+.evform {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+}
+.evform input,
+.evform textarea {
+  flex: 1 1 140px;
+  min-width: 120px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #3c4043;
+  background: #0f1115;
+  color: #e8eaed;
+  font: inherit;
+}
+.evform textarea {
+  flex: 2 1 200px;
+  min-height: 56px;
+  resize: vertical;
+}
+.btn.sm {
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  margin-top: 0;
+}
+code {
+  font-size: 0.85em;
+  background: #0f1115;
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 .btn {
   margin-top: 12px;

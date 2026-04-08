@@ -30,10 +30,13 @@ final class ApplicationController
         foreach ($rows as &$r) {
             $r['id'] = (int) $r['id'];
             $r['embed_snippet'] = null;
+            $r['widget_call_hint'] = null;
             if ($r['status'] === 'approved' && !empty($r['widget_token'])) {
                 $base = rtrim($this->appUrl, '/');
                 $t = htmlspecialchars($r['widget_token'], ENT_QUOTES, 'UTF-8');
                 $r['embed_snippet'] = '<script src="' . $base . '/widget-loader?token=' . $t . '"></script>';
+                $r['widget_call_hint'] =
+                    'После загрузки скрипта: myLittleFairyWidget.show("ключ_события") — ключ задаётся в блоке «События».';
             }
         }
         unset($r);
