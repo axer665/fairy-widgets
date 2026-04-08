@@ -9,6 +9,8 @@ use App\Controller\AuthController;
 use App\Controller\ModeratorController;
 use App\Controller\TrackController;
 use App\Controller\WidgetController;
+use App\Http\Request;
+use App\Http\Response;
 use App\Middleware\AuthMiddleware;
 use App\Middleware\CorsTrackMiddleware;
 use App\Middleware\JsonBodyMiddleware;
@@ -69,6 +71,13 @@ final class Application
         );
 
         $this->router->add('GET', '/widget-loader', $widgetCtrl->serve(...), []);
+        // Старый сниппет: <script src="API/?token=..."> — отдаём тот же JS, что и /widget-loader
+        $this->router->add('GET', '/', static function (Request $request) use ($widgetCtrl): Response {
+            if (trim((string) ($request->query['token'] ?? '')) === '') {
+                return Response::json(['error' => 'not_found'], 404);
+            }
+            return $widgetCtrl->serve($request);
+        }, []);
 
         $this->router->add(
             ['POST', 'OPTIONS'],

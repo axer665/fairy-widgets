@@ -39,6 +39,9 @@ final class WidgetController
         }
         $expectedHost = HostNormalizer::fromUrl($app['site_url']);
         $refererHost = HostNormalizer::fromReferer($request->header('Referer'));
+        if ($refererHost === null && $request->header('Origin') !== null && $request->header('Origin') !== '') {
+            $refererHost = HostNormalizer::fromUrl($request->header('Origin'));
+        }
         if ($expectedHost === null || $refererHost === null || !hash_equals($expectedHost, $refererHost)) {
             return Response::text(
                 'console.error("widget: host mismatch");',
@@ -102,7 +105,7 @@ final class WidgetController
   }
   function mount(){
     preloadImage(SPRITE_URL, function(ok){
-      if (!ok) return;
+      if (!ok) console.warn("widget: sprite failed to load", SPRITE_URL);
       var host = document.createElement("div");
       host.setAttribute("data-widget", "ok");
       host.style.cssText =
@@ -110,10 +113,14 @@ final class WidgetController
         "width:" + WIDGET_W + "px;height:170px;pointer-events:none;opacity:1;";
 
       var fairy = document.createElement("div");
-      fairy.style.cssText =
-        "position:absolute;right:16px;bottom:0;width:" + FRAME_W + "px;height:" + FRAME_H + "px;" +
+      var fairyBg =
         "background-image:url('" + SPRITE_URL + "');background-repeat:no-repeat;" +
         "background-size:" + SPRITE_W + "px " + SPRITE_H + "px;background-position:0 0;";
+      var fairyFallback =
+        "background:#6b3a82 linear-gradient(180deg,#9b6fb8,#4a2d5c);border-radius:12px;";
+      fairy.style.cssText =
+        "position:absolute;right:16px;bottom:0;width:" + FRAME_W + "px;height:" + FRAME_H + "px;" +
+        (ok ? fairyBg : fairyFallback);
 
       var bubble = document.createElement("div");
       bubble.textContent = "Привет! Я фея виджета.";
@@ -129,10 +136,13 @@ final class WidgetController
       track();
 
       var frame = 0;
-      var spriteTimer = setInterval(function(){
-        frame = (frame + 1) % FRAME_COUNT;
-        fairy.style.backgroundPosition = (-frame * FRAME_W) + "px 0";
-      }, 85);
+      var spriteTimer = null;
+      if (ok) {
+        spriteTimer = setInterval(function(){
+          frame = (frame + 1) % FRAME_COUNT;
+          fairy.style.backgroundPosition = (-frame * FRAME_W) + "px 0";
+        }, 85);
+      }
 
       function setRight(px){
         host.style.transition = "right " + FLY_MS + "ms ease-in-out";
@@ -150,7 +160,7 @@ final class WidgetController
       }
 
       function destroy(){
-        clearInterval(spriteTimer);
+        if (spriteTimer) clearInterval(spriteTimer);
         try { host.remove(); } catch(e){}
       }
 

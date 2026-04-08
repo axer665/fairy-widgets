@@ -33,7 +33,7 @@ final class ApplicationController
             if ($r['status'] === 'approved' && !empty($r['widget_token'])) {
                 $base = rtrim($this->appUrl, '/');
                 $t = htmlspecialchars($r['widget_token'], ENT_QUOTES, 'UTF-8');
-                $r['embed_snippet'] = '<script src="' . $base . '/?token=' . $t . '"></script>';
+                $r['embed_snippet'] = '<script src="' . $base . '/widget-loader?token=' . $t . '"></script>';
             }
         }
         unset($r);
