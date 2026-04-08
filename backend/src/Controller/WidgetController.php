@@ -8,6 +8,7 @@ use App\Database;
 use App\Http\Request;
 use App\Http\Response;
 use App\Util\HostNormalizer;
+use PDO;
 
 final class WidgetController
 {
