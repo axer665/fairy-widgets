@@ -114,12 +114,13 @@ final class WidgetController
 
       var fairy = document.createElement("div");
       var fairyBg =
-        "background-image:url('" + SPRITE_URL + "');background-repeat:no-repeat;" +
+        "background-color:transparent;background-image:url('" + SPRITE_URL + "');background-repeat:no-repeat;" +
         "background-size:" + SPRITE_W + "px " + SPRITE_H + "px;background-position:0 0;";
       var fairyFallback =
         "background:#6b3a82 linear-gradient(180deg,#9b6fb8,#4a2d5c);border-radius:12px;";
       fairy.style.cssText =
         "position:absolute;right:16px;bottom:0;width:" + FRAME_W + "px;height:" + FRAME_H + "px;" +
+        "transform:scaleX(1);transform-origin:50% 100%;" +
         (ok ? fairyBg : fairyFallback);
 
       var bubble = document.createElement("div");
@@ -170,6 +171,7 @@ final class WidgetController
           showBubble();
           setTimeout(function(){
             hideBubble();
+            fairy.style.transform = "scaleX(-1)";
             setRight(START_RIGHT);
             setTimeout(function(){
               setTimeout(destroy, REMOVE_DELAY_MS);
