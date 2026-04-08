@@ -75,10 +75,11 @@ final class WidgetController
   var SPRITE_W = 1024;
   var SPRITE_H = 106;
   var WIDGET_W = 180;
-  var START_RIGHT = -220;
-  var FLY_IN_RIGHT = 250;
-  var START_BOTTOM = 0;
-  var FLY_IN_TOP = 200;
+  var WIDGET_H = 170;
+  var FLY_FROM_RIGHT_OVERFLOW = 220;
+  var FLY_FROM_BOTTOM = 0;
+  var FLY_TO_RIGHT_INSET = 250;
+  var FLY_TO_TOP = 200;
   var FLY_MS = 900;
   var MESSAGE_DELAY_MS = 5000;
   var REMOVE_DELAY_MS = 5000;
@@ -91,6 +92,21 @@ final class WidgetController
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: TOKEN, page_url: url, application_id: APP_ID, event: "view" })
     }).catch(function(){});
+  }
+  function flyFromXY(){
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    return {
+      x: vw + FLY_FROM_RIGHT_OVERFLOW - WIDGET_W,
+      y: vh - WIDGET_H - FLY_FROM_BOTTOM
+    };
+  }
+  function flyToXY(){
+    var vw = window.innerWidth;
+    return {
+      x: vw - FLY_TO_RIGHT_INSET - WIDGET_W,
+      y: FLY_TO_TOP
+    };
   }
   function preloadImage(url, onDone){
     var img = new Image();
@@ -110,9 +126,10 @@ final class WidgetController
       if (!ok) console.warn("widget: sprite failed to load", SPRITE_URL);
       var host = document.createElement("div");
       host.setAttribute("data-widget", "ok");
+      var pStart = flyFromXY();
       host.style.cssText =
-        "position:fixed;right:" + START_RIGHT + "px;top:auto;bottom:" + START_BOTTOM + "px;z-index:2147483647;" +
-        "width:" + WIDGET_W + "px;height:170px;pointer-events:none;opacity:1;";
+        "position:fixed;left:" + pStart.x + "px;top:" + pStart.y + "px;right:auto;bottom:auto;" +
+        "z-index:2147483647;width:" + WIDGET_W + "px;height:" + WIDGET_H + "px;pointer-events:none;opacity:1;";
 
       var fairy = document.createElement("div");
       var fairyBg =
@@ -147,18 +164,11 @@ final class WidgetController
         }, 85);
       }
 
-      function setHostFlight(rightPx, yMode){
-        host.style.transition =
-          "right " + FLY_MS + "ms ease-in-out, top " + FLY_MS + "ms ease-in-out, bottom " + FLY_MS + "ms ease-in-out";
+      function setHostXY(x, y){
+        host.style.transition = "left " + FLY_MS + "ms ease-in-out, top " + FLY_MS + "ms ease-in-out";
         requestAnimationFrame(function(){
-          host.style.right = rightPx + "px";
-          if (yMode === "in") {
-            host.style.bottom = "auto";
-            host.style.top = FLY_IN_TOP + "px";
-          } else {
-            host.style.top = "auto";
-            host.style.bottom = START_BOTTOM + "px";
-          }
+          host.style.left = x + "px";
+          host.style.top = y + "px";
         });
       }
 
@@ -178,13 +188,15 @@ final class WidgetController
       }
 
       setTimeout(function(){
-        setHostFlight(FLY_IN_RIGHT, "in");
+        var pEnd = flyToXY();
+        setHostXY(pEnd.x, pEnd.y);
         setTimeout(function(){
           showBubble();
           setTimeout(function(){
             hideBubble();
             fairy.style.transform = "scaleX(-1)";
-            setHostFlight(START_RIGHT, "start");
+            var pBack = flyFromXY();
+            setHostXY(pBack.x, pBack.y);
             setTimeout(function(){
               setTimeout(destroy, REMOVE_DELAY_MS);
             }, FLY_MS);
