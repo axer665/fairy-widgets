@@ -78,8 +78,8 @@ final class WidgetController
   var WIDGET_H = 170;
   var FLY_FROM_RIGHT_OVERFLOW = 220;
   var FLY_FROM_BOTTOM = 0;
-  var FLY_TO_RIGHT_INSET = 250;
-  var FLY_TO_TOP = 100;
+  var FLY_TO_RIGHT_INSET = 150;
+  var FLY_TO_TOP = 50;
   var FLY_MS = 900;
   var MESSAGE_DELAY_MS = 5000;
   var REMOVE_DELAY_MS = 5000;
