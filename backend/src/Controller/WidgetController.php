@@ -78,6 +78,7 @@ final class WidgetController
   var START_RIGHT = -220;
   var FLY_IN_RIGHT = 250;
   var START_BOTTOM = 0;
+  var FLY_IN_TOP = 200;
   var FLY_MS = 900;
   var MESSAGE_DELAY_MS = 5000;
   var REMOVE_DELAY_MS = 5000;
@@ -110,7 +111,7 @@ final class WidgetController
       var host = document.createElement("div");
       host.setAttribute("data-widget", "ok");
       host.style.cssText =
-        "position:fixed;right:" + START_RIGHT + "px;bottom:" + START_BOTTOM + "px;z-index:2147483647;" +
+        "position:fixed;right:" + START_RIGHT + "px;top:auto;bottom:" + START_BOTTOM + "px;z-index:2147483647;" +
         "width:" + WIDGET_W + "px;height:170px;pointer-events:none;opacity:1;";
 
       var fairy = document.createElement("div");
@@ -146,9 +147,19 @@ final class WidgetController
         }, 85);
       }
 
-      function setRight(px){
-        host.style.transition = "right " + FLY_MS + "ms ease-in-out";
-        requestAnimationFrame(function(){ host.style.right = px + "px"; });
+      function setHostFlight(rightPx, yMode){
+        host.style.transition =
+          "right " + FLY_MS + "ms ease-in-out, top " + FLY_MS + "ms ease-in-out, bottom " + FLY_MS + "ms ease-in-out";
+        requestAnimationFrame(function(){
+          host.style.right = rightPx + "px";
+          if (yMode === "in") {
+            host.style.bottom = "auto";
+            host.style.top = FLY_IN_TOP + "px";
+          } else {
+            host.style.top = "auto";
+            host.style.bottom = START_BOTTOM + "px";
+          }
+        });
       }
 
       function showBubble(){
@@ -167,13 +178,13 @@ final class WidgetController
       }
 
       setTimeout(function(){
-        setRight(FLY_IN_RIGHT);
+        setHostFlight(FLY_IN_RIGHT, "in");
         setTimeout(function(){
           showBubble();
           setTimeout(function(){
             hideBubble();
             fairy.style.transform = "scaleX(-1)";
-            setRight(START_RIGHT);
+            setHostFlight(START_RIGHT, "start");
             setTimeout(function(){
               setTimeout(destroy, REMOVE_DELAY_MS);
             }, FLY_MS);
