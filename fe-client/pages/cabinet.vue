@@ -25,10 +25,15 @@
 
         <template v-if="a.status === 'approved'">
           <p class="muted small help-top">
-            Один токен выдаётся на заявку (URL сайта) — он общий для всех фей этой заявки. Каждая фея подключается своим
-            <code>fairy_id</code> в адресе скрипта. События можно назначить нескольким феям; одно и то же событие одновременно выполняет только одна фея. Если фея занята или событие уже у другой феи, вызов
-            <code>show</code> не сработает — запись в журнале сбоев.
+            На сайт вставляется один скрипт с токеном заявки. Феи и события настраиваются только здесь; при вызове
+            <code>myLittleFairyWidget.show("ключ")</code> сервер сам выбирает фею, проверяет занятость и блокировку
+            события. Если показ невозможен — запись в журнале сбоев.
           </p>
+
+          <div v-if="a.embed_snippet" class="embed card-inner">
+            <p>Код для сайта:</p>
+            <pre>{{ a.embed_snippet }}</pre>
+          </div>
 
           <div v-for="f in a.fairies" :key="f.id" class="fairy-block card-inner">
             <div class="fairy-head">
@@ -48,10 +53,6 @@
                 />
                 стандартное приветствие
               </label>
-            </div>
-            <div class="embed">
-              <p>Код для сайта (эта фея):</p>
-              <pre>{{ f.embed_snippet }}</pre>
             </div>
             <div v-if="a.events?.length" class="assign">
               <p class="muted small">События для этой феи (можно несколько):</p>
@@ -148,7 +149,6 @@ type FairyRow = {
   id: number;
   name: string;
   standard_behavior: boolean;
-  embed_snippet: string;
   assigned_event_ids: number[];
 };
 
@@ -157,6 +157,7 @@ type AppRow = {
   site_url: string;
   status: string;
   moderator_note: string | null;
+  embed_snippet?: string;
   fairies: FairyRow[];
   events?: WidgetEventRow[];
 };
@@ -236,6 +237,7 @@ function reasonLabel(code: string) {
     event_not_assigned: "событие не назначено этой фее",
     event_not_found: "событие с таким ключом не найдено",
     standard_not_enabled: "стандартное поведение выключено",
+    all_fairies_busy: "все подходящие феи были заняты",
   };
   return m[code] ?? code;
 }

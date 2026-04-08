@@ -38,6 +38,7 @@ final class ApplicationController
             }
             $appTok = htmlspecialchars((string) $r['widget_token'], ENT_QUOTES, 'UTF-8');
             unset($r['widget_token']);
+            $r['embed_snippet'] = '<script src="' . $base . '/widget-loader?token=' . $appTok . '"></script>';
             $fst = $pdo->prepare(
                 'SELECT id, name, standard_behavior FROM widget_fairies WHERE application_id = ? ORDER BY id ASC',
             );
@@ -54,7 +55,6 @@ final class ApplicationController
                     'id' => $fid,
                     'name' => $fr['name'],
                     'standard_behavior' => (bool) (int) ($fr['standard_behavior'] ?? 0),
-                    'embed_snippet' => '<script src="' . $base . '/widget-loader?token=' . $appTok . '&fairy_id=' . $fid . '"></script>',
                     'assigned_event_ids' => $assigned,
                 ];
             }

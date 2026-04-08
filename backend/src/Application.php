@@ -42,7 +42,7 @@ final class Application
 
         $authCtrl = new AuthController($this->db, $secret);
         $appCtrl = new ApplicationController($this->db, $appUrl);
-        $fairyCtrl = new FairyController($this->db, $appUrl);
+        $fairyCtrl = new FairyController($this->db);
         $modCtrl = new ModeratorController($this->db);
         $widgetCtrl = new WidgetController($this->db, $appUrl);
         $widgetEventCtrl = new WidgetEventController($this->db);

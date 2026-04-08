@@ -20,6 +20,7 @@ final class WidgetController
     public const REASON_NOT_ASSIGNED = 'event_not_assigned';
     public const REASON_NOT_FOUND = 'event_not_found';
     public const REASON_STANDARD_DISABLED = 'standard_not_enabled';
+    public const REASON_ALL_FAIRIES_BUSY = 'all_fairies_busy';
 
     public function __construct(
         private readonly Database $db,
@@ -35,21 +36,23 @@ final class WidgetController
                 'Content-Type' => 'application/javascript; charset=utf-8',
             ]);
         }
-        $fairyIdQ = isset($request->query['fairy_id']) ? (int) $request->query['fairy_id'] : 0;
-        $ctx = $this->resolveEmbedContext($request, $token, $fairyIdQ > 0 ? $fairyIdQ : null);
-        if ($ctx === null) {
+        $appRow = $this->resolveApplicationForEmbed($request, $token);
+        if ($appRow === null) {
             return Response::text(
-                'console.error("widget: invalid token, fairy_id or host mismatch");',
+                'console.error("widget: invalid token or host mismatch");',
                 403,
                 ['Content-Type' => 'application/javascript; charset=utf-8'],
             );
         }
 
         $apiBase = $this->appUrl;
-        $fairyId = (int) $ctx['fairy_id'];
-        $appId = (int) $ctx['application_id'];
-        $standardBehavior = (bool) (int) ($ctx['standard_behavior'] ?? 0);
-        $js = $this->buildWidgetJs($apiBase, $token, $fairyId, $appId, $standardBehavior);
+        $appId = (int) $appRow['application_id'];
+        $chk = $this->db->pdo()->prepare(
+            'SELECT 1 FROM widget_fairies WHERE application_id = ? AND standard_behavior = 1 LIMIT 1',
+        );
+        $chk->execute([$appId]);
+        $standardBehavior = (bool) $chk->fetchColumn();
+        $js = $this->buildWidgetJs($apiBase, $token, $standardBehavior);
         return Response::text($js, 200, [
             'Content-Type' => 'application/javascript; charset=utf-8',
             'Cache-Control' => 'no-store',
@@ -65,25 +68,23 @@ final class WidgetController
         $token = trim((string) ($b['token'] ?? ''));
         $kind = trim((string) ($b['kind'] ?? ''));
         $eventKey = trim((string) ($b['event_key'] ?? ''));
-        $fairyIdBody = isset($b['fairy_id']) ? (int) $b['fairy_id'] : 0;
-        if ($token === '' || $fairyIdBody < 1) {
-            return Response::json(['error' => 'validation', 'message' => 'token и fairy_id обязательны'], 422);
+        if ($token === '') {
+            return Response::json(['error' => 'validation', 'message' => 'token обязателен'], 422);
         }
-        $ctx = $this->resolveEmbedContext($request, $token, $fairyIdBody);
-        if ($ctx === null) {
+        $appRow = $this->resolveApplicationForEmbed($request, $token);
+        if ($appRow === null) {
             return Response::json(['error' => 'forbidden'], 403);
         }
-        $fairyId = (int) $ctx['fairy_id'];
-        $appId = (int) $ctx['application_id'];
+        $appId = (int) $appRow['application_id'];
 
         if ($kind === 'standard') {
-            return $this->beginStandard($fairyId, $appId, $ctx);
+            return $this->beginStandardForApplication($appId);
         }
         if ($eventKey === '' || !preg_match('/^[a-zA-Z0-9_-]{1,64}$/', $eventKey)) {
             return Response::json(['error' => 'validation'], 422);
         }
 
-        return $this->beginEvent($fairyId, $appId, $eventKey, $ctx);
+        return $this->beginEventForApplication($appId, $eventKey);
     }
 
     public function eventComplete(Request $request): Response
@@ -94,39 +95,32 @@ final class WidgetController
         }
         $token = trim((string) ($b['token'] ?? ''));
         $executionId = isset($b['execution_id']) ? (int) $b['execution_id'] : 0;
-        $fairyIdBody = isset($b['fairy_id']) ? (int) $b['fairy_id'] : 0;
-        if ($token === '' || $executionId < 1 || $fairyIdBody < 1) {
-            return Response::json(['error' => 'validation', 'message' => 'token, fairy_id и execution_id обязательны'], 422);
+        if ($token === '' || $executionId < 1) {
+            return Response::json(['error' => 'validation', 'message' => 'token и execution_id обязательны'], 422);
         }
-        $ctx = $this->resolveEmbedContext($request, $token, $fairyIdBody);
-        if ($ctx === null) {
+        if ($this->resolveApplicationForEmbed($request, $token) === null) {
             return Response::json(['error' => 'forbidden'], 403);
         }
-        $fairyId = (int) $ctx['fairy_id'];
         $pdo = $this->db->pdo();
         try {
             $pdo->beginTransaction();
-            $fst = $pdo->prepare(
-                'SELECT id, current_execution_id FROM widget_fairies WHERE id = ? FOR UPDATE',
-            );
-            $fst->execute([$fairyId]);
-            $fairyRow = $fst->fetch(PDO::FETCH_ASSOC);
-            if (!$fairyRow) {
-                $pdo->rollBack();
-
-                return Response::json(['error' => 'not_found'], 404);
-            }
             $st = $pdo->prepare(
-                'SELECT id, fairy_id, completed_at FROM widget_event_executions WHERE id = ? FOR UPDATE',
+                'SELECT x.id AS ex_id, x.fairy_id, x.completed_at, f.current_execution_id
+                 FROM widget_event_executions x
+                 INNER JOIN widget_fairies f ON f.id = x.fairy_id
+                 INNER JOIN widget_applications a ON a.id = f.application_id
+                 WHERE x.id = ? AND a.widget_token = ? AND a.status = ?
+                 FOR UPDATE',
             );
-            $st->execute([$executionId]);
-            $ex = $st->fetch(PDO::FETCH_ASSOC);
-            if (!$ex || (int) $ex['fairy_id'] !== $fairyId) {
+            $st->execute([$executionId, $token, 'approved']);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$row) {
                 $pdo->rollBack();
 
                 return Response::json(['error' => 'not_found'], 404);
             }
-            if ($ex['completed_at'] !== null) {
+            $fairyId = (int) $row['fairy_id'];
+            if ($row['completed_at'] !== null) {
                 $pdo->rollBack();
 
                 return Response::json(['ok' => true]);
@@ -134,7 +128,7 @@ final class WidgetController
             $pdo->prepare(
                 'UPDATE widget_event_executions SET completed_at = CURRENT_TIMESTAMP WHERE id = ?',
             )->execute([$executionId]);
-            if ((int) ($fairyRow['current_execution_id'] ?? 0) === $executionId) {
+            if ((int) ($row['current_execution_id'] ?? 0) === $executionId) {
                 $pdo->prepare(
                     'UPDATE widget_fairies SET current_execution_id = NULL WHERE id = ?',
                 )->execute([$fairyId]);
@@ -151,29 +145,15 @@ final class WidgetController
         return Response::json(['ok' => true]);
     }
 
-    /** @return array<string, mixed>|null */
-    private function resolveEmbedContext(Request $request, string $appToken, ?int $fairyId): ?array
+    /** @return array{application_id: int, site_url: string}|null */
+    private function resolveApplicationForEmbed(Request $request, string $appToken): ?array
     {
-        $pdo = $this->db->pdo();
-        if ($fairyId !== null && $fairyId > 0) {
-            $st = $pdo->prepare(
-                'SELECT f.id AS fairy_id, f.application_id, f.standard_behavior, a.site_url, a.status
-                 FROM widget_fairies f
-                 INNER JOIN widget_applications a ON a.id = f.application_id
-                 WHERE a.widget_token = ? AND a.status = ? AND f.id = ? LIMIT 1',
-            );
-            $st->execute([$appToken, 'approved', $fairyId]);
-        } else {
-            $st = $pdo->prepare(
-                'SELECT f.id AS fairy_id, f.application_id, f.standard_behavior, a.site_url, a.status
-                 FROM widget_fairies f
-                 INNER JOIN widget_applications a ON a.id = f.application_id
-                 WHERE a.widget_token = ? AND a.status = ?
-                 ORDER BY f.id ASC
-                 LIMIT 1',
-            );
-            $st->execute([$appToken, 'approved']);
-        }
+        $st = $this->db->pdo()->prepare(
+            'SELECT a.id AS application_id, a.site_url, a.status
+             FROM widget_applications a
+             WHERE a.widget_token = ? AND a.status = ? LIMIT 1',
+        );
+        $st->execute([$appToken, 'approved']);
         $row = $st->fetch(PDO::FETCH_ASSOC);
         if (!$row) {
             return null;
@@ -187,73 +167,99 @@ final class WidgetController
             return null;
         }
 
-        return $row;
+        return [
+            'application_id' => (int) $row['application_id'],
+            'site_url' => (string) $row['site_url'],
+        ];
     }
 
-    /** @param array<string, mixed> $ctx */
-    private function beginStandard(int $fairyId, int $appId, array $ctx): Response
+    private function firstFairyIdForLog(PDO $pdo, int $appId): int
     {
-        if (!(bool) (int) ($ctx['standard_behavior'] ?? 0)) {
+        $st = $pdo->prepare(
+            'SELECT id FROM widget_fairies WHERE application_id = ? ORDER BY id ASC LIMIT 1',
+        );
+        $st->execute([$appId]);
+        $id = $st->fetchColumn();
+
+        return $id !== false ? (int) $id : 0;
+    }
+
+    private function beginStandardForApplication(int $appId): Response
+    {
+        $pdo = $this->db->pdo();
+        $logFairy = $this->firstFairyIdForLog($pdo, $appId);
+        if ($logFairy < 1) {
+            return Response::json(['error' => 'not_found'], 404);
+        }
+        $st = $pdo->prepare(
+            'SELECT id FROM widget_fairies WHERE application_id = ? AND standard_behavior = 1 ORDER BY id ASC',
+        );
+        $st->execute([$appId]);
+        /** @var list<int|string> $candidates */
+        $candidates = $st->fetchAll(PDO::FETCH_COLUMN);
+        if ($candidates === []) {
             return Response::json(['error' => 'forbidden', 'reason' => self::REASON_STANDARD_DISABLED], 403);
         }
-
-        $pdo = $this->db->pdo();
         $defaultPhrase = 'Привет! Я фея виджета.';
-        try {
-            $pdo->beginTransaction();
-            $this->releaseStaleExecution($pdo, $fairyId);
-            $st = $pdo->prepare(
-                'SELECT id, current_execution_id FROM widget_fairies WHERE id = ? FOR UPDATE',
-            );
-            $st->execute([$fairyId]);
-            $fairy = $st->fetch(PDO::FETCH_ASSOC);
-            if (!$fairy) {
-                $pdo->rollBack();
-
-                return Response::json(['error' => 'not_found'], 404);
-            }
-            if (!empty($fairy['current_execution_id'])) {
-                $this->logFailureFromFairyBusy(
-                    $pdo,
-                    $appId,
-                    $fairyId,
-                    '_standard',
-                    (int) $fairy['current_execution_id'],
-                    null,
+        foreach ($candidates as $fidRaw) {
+            $fairyId = (int) $fidRaw;
+            try {
+                $pdo->beginTransaction();
+                $this->releaseStaleExecution($pdo, $fairyId);
+                $fst = $pdo->prepare(
+                    'SELECT id, current_execution_id FROM widget_fairies WHERE id = ? FOR UPDATE',
                 );
+                $fst->execute([$fairyId]);
+                $fairy = $fst->fetch(PDO::FETCH_ASSOC);
+                if (!$fairy) {
+                    $pdo->rollBack();
+                    continue;
+                }
+                if (!empty($fairy['current_execution_id'])) {
+                    $pdo->rollBack();
+                    continue;
+                }
+                $pdo->prepare(
+                    'INSERT INTO widget_event_executions (fairy_id, widget_event_id, kind) VALUES (?,?,?)',
+                )->execute([$fairyId, null, 'standard']);
+                $execId = (int) $pdo->lastInsertId();
+                $pdo->prepare(
+                    'UPDATE widget_fairies SET current_execution_id = ? WHERE id = ?',
+                )->execute([$execId, $fairyId]);
                 $pdo->commit();
 
-                return Response::json(
-                    ['error' => 'conflict', 'reason' => self::REASON_FAIRY_BUSY],
-                    409,
-                );
+                return Response::json([
+                    'execution_id' => $execId,
+                    'phrase' => $defaultPhrase,
+                ]);
+            } catch (PDOException) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
             }
-            $pdo->prepare(
-                'INSERT INTO widget_event_executions (fairy_id, widget_event_id, kind) VALUES (?,?,?)',
-            )->execute([$fairyId, null, 'standard']);
-            $execId = (int) $pdo->lastInsertId();
-            $pdo->prepare(
-                'UPDATE widget_fairies SET current_execution_id = ? WHERE id = ?',
-            )->execute([$execId, $fairyId]);
-            $pdo->commit();
-        } catch (PDOException) {
-            if ($pdo->inTransaction()) {
-                $pdo->rollBack();
-            }
-
-            return Response::json(['error' => 'server'], 500);
         }
+        $firstStd = (int) $candidates[0];
+        $this->insertFailure(
+            $pdo,
+            $appId,
+            $firstStd,
+            null,
+            '_standard',
+            self::REASON_ALL_FAIRIES_BUSY,
+            'Все феи со включённым стандартным приветствием заняты',
+            null,
+        );
 
-        return Response::json([
-            'execution_id' => $execId,
-            'phrase' => $defaultPhrase,
-        ]);
+        return Response::json(['error' => 'conflict', 'reason' => self::REASON_ALL_FAIRIES_BUSY], 409);
     }
 
-    /** @param array<string, mixed> $ctx */
-    private function beginEvent(int $fairyId, int $appId, string $eventKey, array $ctx): Response
+    private function beginEventForApplication(int $appId, string $eventKey): Response
     {
         $pdo = $this->db->pdo();
+        $logFairy = $this->firstFairyIdForLog($pdo, $appId);
+        if ($logFairy < 1) {
+            return Response::json(['error' => 'not_found'], 404);
+        }
         $st = $pdo->prepare(
             'SELECT id, phrase FROM widget_events WHERE application_id = ? AND event_key = ? LIMIT 1',
         );
@@ -263,7 +269,7 @@ final class WidgetController
             $this->insertFailure(
                 $pdo,
                 $appId,
-                $fairyId,
+                $logFairy,
                 null,
                 $eventKey,
                 self::REASON_NOT_FOUND,
@@ -275,19 +281,24 @@ final class WidgetController
         }
         $widgetEventId = (int) $ev['id'];
         $phrase = (string) $ev['phrase'];
-        $as = $pdo->prepare(
-            'SELECT 1 FROM fairy_events WHERE fairy_id = ? AND widget_event_id = ? LIMIT 1',
+        $cst = $pdo->prepare(
+            'SELECT f.id FROM widget_fairies f
+             INNER JOIN fairy_events fe ON fe.fairy_id = f.id AND fe.widget_event_id = ?
+             WHERE f.application_id = ?
+             ORDER BY f.id ASC',
         );
-        $as->execute([$fairyId, $widgetEventId]);
-        if (!$as->fetchColumn()) {
+        $cst->execute([$widgetEventId, $appId]);
+        /** @var list<int|string> $fairyIds */
+        $fairyIds = $cst->fetchAll(PDO::FETCH_COLUMN);
+        if ($fairyIds === []) {
             $this->insertFailure(
                 $pdo,
                 $appId,
-                $fairyId,
+                $logFairy,
                 $widgetEventId,
                 $eventKey,
                 self::REASON_NOT_ASSIGNED,
-                'Событие не назначено этой фее',
+                'Событие не назначено ни одной фее',
                 null,
             );
 
@@ -295,6 +306,7 @@ final class WidgetController
         }
 
         $lockName = 'wevt_' . $widgetEventId;
+        $execId = 0;
         try {
             $pdo->beginTransaction();
             $lk = $pdo->query('SELECT GET_LOCK(' . $pdo->quote($lockName) . ', 8)')->fetchColumn();
@@ -304,35 +316,6 @@ final class WidgetController
                 return Response::json(['error' => 'server', 'message' => 'lock'], 503);
             }
             try {
-                $this->releaseStaleExecution($pdo, $fairyId);
-                $fst = $pdo->prepare(
-                    'SELECT id, current_execution_id FROM widget_fairies WHERE id = ? FOR UPDATE',
-                );
-                $fst->execute([$fairyId]);
-                $fairy = $fst->fetch(PDO::FETCH_ASSOC);
-                if (!$fairy) {
-                    $pdo->query('SELECT RELEASE_LOCK(' . $pdo->quote($lockName) . ')');
-                    $pdo->rollBack();
-
-                    return Response::json(['error' => 'not_found'], 404);
-                }
-                if (!empty($fairy['current_execution_id'])) {
-                    $this->logFailureFromFairyBusy(
-                        $pdo,
-                        $appId,
-                        $fairyId,
-                        $eventKey,
-                        (int) $fairy['current_execution_id'],
-                        $widgetEventId,
-                    );
-                    $pdo->query('SELECT RELEASE_LOCK(' . $pdo->quote($lockName) . ')');
-                    $pdo->commit();
-
-                    return Response::json(
-                        ['error' => 'conflict', 'reason' => self::REASON_FAIRY_BUSY],
-                        409,
-                    );
-                }
                 $ost = $pdo->prepare(
                     'SELECT id, fairy_id FROM widget_event_executions
                      WHERE widget_event_id = ? AND completed_at IS NULL LIMIT 1 FOR UPDATE',
@@ -345,11 +328,11 @@ final class WidgetController
                     $this->insertFailure(
                         $pdo,
                         $appId,
-                        $fairyId,
+                        (int) $fairyIds[0],
                         $widgetEventId,
                         $eventKey,
                         self::REASON_EVENT_LOCKED,
-                        'Тот же event уже выполняет другая фея',
+                        'Это событие уже выполняется (другая фея)',
                         [
                             'blocker_execution_id' => (int) $other['id'],
                             'blocker_fairy_id' => $otherFairyId,
@@ -365,13 +348,42 @@ final class WidgetController
                         409,
                     );
                 }
-                $pdo->prepare(
-                    'INSERT INTO widget_event_executions (fairy_id, widget_event_id, kind) VALUES (?,?,?)',
-                )->execute([$fairyId, $widgetEventId, 'event']);
-                $execId = (int) $pdo->lastInsertId();
-                $pdo->prepare(
-                    'UPDATE widget_fairies SET current_execution_id = ? WHERE id = ?',
-                )->execute([$execId, $fairyId]);
+                foreach ($fairyIds as $fidRaw) {
+                    $fairyId = (int) $fidRaw;
+                    $this->releaseStaleExecution($pdo, $fairyId);
+                    $fst = $pdo->prepare(
+                        'SELECT id, current_execution_id FROM widget_fairies WHERE id = ? FOR UPDATE',
+                    );
+                    $fst->execute([$fairyId]);
+                    $fairy = $fst->fetch(PDO::FETCH_ASSOC);
+                    if (!$fairy || !empty($fairy['current_execution_id'])) {
+                        continue;
+                    }
+                    $pdo->prepare(
+                        'INSERT INTO widget_event_executions (fairy_id, widget_event_id, kind) VALUES (?,?,?)',
+                    )->execute([$fairyId, $widgetEventId, 'event']);
+                    $execId = (int) $pdo->lastInsertId();
+                    $pdo->prepare(
+                        'UPDATE widget_fairies SET current_execution_id = ? WHERE id = ?',
+                    )->execute([$execId, $fairyId]);
+                    $pdo->query('SELECT RELEASE_LOCK(' . $pdo->quote($lockName) . ')');
+                    $pdo->commit();
+
+                    return Response::json([
+                        'execution_id' => $execId,
+                        'phrase' => $phrase,
+                    ]);
+                }
+                $this->insertFailure(
+                    $pdo,
+                    $appId,
+                    (int) $fairyIds[0],
+                    $widgetEventId,
+                    $eventKey,
+                    self::REASON_ALL_FAIRIES_BUSY,
+                    'Все феи с этим событием заняты',
+                    null,
+                );
                 $pdo->query('SELECT RELEASE_LOCK(' . $pdo->quote($lockName) . ')');
                 $pdo->commit();
             } catch (PDOException $e) {
@@ -386,10 +398,7 @@ final class WidgetController
             return Response::json(['error' => 'server'], 500);
         }
 
-        return Response::json([
-            'execution_id' => $execId,
-            'phrase' => $phrase,
-        ]);
+        return Response::json(['error' => 'conflict', 'reason' => self::REASON_ALL_FAIRIES_BUSY], 409);
     }
 
     private function blockerEventKey(PDO $pdo, int $executionId): ?string
@@ -507,8 +516,6 @@ final class WidgetController
     private function buildWidgetJs(
         string $apiBase,
         string $widgetToken,
-        int $fairyId,
-        int $applicationId,
         bool $standardBehavior,
     ): string {
         $api = addslashes($apiBase);
@@ -519,8 +526,6 @@ final class WidgetController
 (function(){
   var API = "{$api}";
   var TOKEN = "{$tok}";
-  var FAIRY_ID = {$fairyId};
-  var APP_ID = {$applicationId};
   var STANDARD_BEHAVIOR = {$stdJs};
   var DEFAULT_PHRASE = "{$defaultPhrase}";
   var WAIT_BEFORE_FLY_MS = 10000;
@@ -546,7 +551,7 @@ final class WidgetController
     fetch(API + "/api/track", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: TOKEN, page_url: url, fairy_id: FAIRY_ID, application_id: APP_ID })
+      body: JSON.stringify({ token: TOKEN, page_url: url })
     }).catch(function(){});
   }
   function flyFromXY(){
@@ -586,7 +591,7 @@ final class WidgetController
     });
   }
   function completeExecution(executionId){
-    postJson("/api/widget/event-complete", { token: TOKEN, fairy_id: FAIRY_ID, execution_id: executionId }).catch(function(){});
+    postJson("/api/widget/event-complete", { token: TOKEN, execution_id: executionId }).catch(function(){});
   }
   function runFairySequence(phrase, spriteOk, introMs, executionId){
     introMs = introMs || 0;
@@ -702,7 +707,7 @@ final class WidgetController
       console.error("myLittleFairyWidget.show: передайте ключ события (строка), см. кабинет");
       return;
     }
-    beginAndPlay({ token: TOKEN, fairy_id: FAIRY_ID, event_key: key }, function(){
+    beginAndPlay({ token: TOKEN, event_key: key }, function(){
       console.warn("myLittleFairyWidget: событие не выполнено (фея занята, событие у другой феи и т.д.) — см. кабинет");
     });
   }
@@ -710,12 +715,12 @@ final class WidgetController
   function boot(){
     track();
     if (window.myLittleFairyWidget) return;
-    window.myLittleFairyWidget = { show: show, version: "2" };
+    window.myLittleFairyWidget = { show: show, version: "3" };
     if (STANDARD_BEHAVIOR) {
       preloadImage(SPRITE_URL, function(){
         autoTimer = setTimeout(function(){
           autoTimer = null;
-          beginAndPlay({ token: TOKEN, fairy_id: FAIRY_ID, kind: "standard" }, function(){});
+          beginAndPlay({ token: TOKEN, kind: "standard" }, function(){});
         }, WAIT_BEFORE_FLY_MS);
       });
     }
