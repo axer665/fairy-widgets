@@ -6,6 +6,7 @@ namespace App;
 
 use App\Controller\ApplicationController;
 use App\Controller\AuthController;
+use App\Controller\FairyController;
 use App\Controller\ModeratorController;
 use App\Controller\TrackController;
 use App\Controller\WidgetController;
@@ -41,10 +42,13 @@ final class Application
 
         $authCtrl = new AuthController($this->db, $secret);
         $appCtrl = new ApplicationController($this->db, $appUrl);
+        $fairyCtrl = new FairyController($this->db, $appUrl);
         $modCtrl = new ModeratorController($this->db);
         $widgetCtrl = new WidgetController($this->db, $appUrl);
         $widgetEventCtrl = new WidgetEventController($this->db);
         $trackCtrl = new TrackController($this->db);
+
+        $corsWidget = new CorsWidgetPublicMiddleware();
 
         $this->router->add('POST', '/api/register', $authCtrl->register(...), [$json, $log]);
         $this->router->add('POST', '/api/login', $authCtrl->login(...), [$json, $log]);
@@ -52,7 +56,31 @@ final class Application
         $this->router->add('GET', '/api/me', $authCtrl->me(...), [$json, $auth, $log]);
         $this->router->add('GET', '/api/applications', $appCtrl->list(...), [$json, $auth, $log]);
         $this->router->add('POST', '/api/applications', $appCtrl->create(...), [$json, $auth, $log]);
-        $this->router->add('PUT', '/api/applications/{id}', $appCtrl->update(...), [$json, $auth, $log]);
+        $this->router->add(
+            'GET',
+            '/api/applications/{id}/fairies',
+            $fairyCtrl->listByApplication(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'POST',
+            '/api/applications/{id}/fairies',
+            $fairyCtrl->create(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'GET',
+            '/api/applications/{id}/event-failures',
+            $fairyCtrl->listFailures(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add('PUT', '/api/fairies/{id}', $fairyCtrl->update(...), [$json, $auth, $log]);
+        $this->router->add(
+            'PUT',
+            '/api/fairies/{id}/events',
+            $fairyCtrl->putAssignments(...),
+            [$json, $auth, $log],
+        );
         $this->router->add(
             'GET',
             '/api/applications/{id}/events',
@@ -87,11 +115,11 @@ final class Application
         );
 
         $this->router->add('GET', '/widget-loader', $widgetCtrl->serve(...), []);
-        // Старый сниппет: <script src="API/?token=..."> — отдаём тот же JS, что и /widget-loader
         $this->router->add('GET', '/', static function (Request $request) use ($widgetCtrl): Response {
             if (trim((string) ($request->query['token'] ?? '')) === '') {
                 return Response::json(['error' => 'not_found'], 404);
             }
+
             return $widgetCtrl->serve($request);
         }, []);
 
@@ -102,10 +130,16 @@ final class Application
             [new CorsTrackMiddleware(), $json],
         );
         $this->router->add(
-            ['GET', 'OPTIONS'],
-            '/api/widget/event-phrase',
-            $widgetCtrl->eventPhrase(...),
-            [new CorsWidgetPublicMiddleware()],
+            ['POST', 'OPTIONS'],
+            '/api/widget/event-begin',
+            $widgetCtrl->eventBegin(...),
+            [$corsWidget, $json, $log],
+        );
+        $this->router->add(
+            ['POST', 'OPTIONS'],
+            '/api/widget/event-complete',
+            $widgetCtrl->eventComplete(...),
+            [$corsWidget, $json, $log],
         );
     }
 }

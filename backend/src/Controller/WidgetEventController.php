@@ -78,6 +78,10 @@ final class WidgetEventController
             $row = $st->fetch(PDO::FETCH_ASSOC);
             $id = $row ? (int) $row['id'] : 0;
         }
+        $pdo->prepare(
+            'INSERT IGNORE INTO fairy_events (fairy_id, widget_event_id) SELECT id, ? FROM widget_fairies WHERE application_id = ?',
+        )->execute([$id, $appId]);
+
         return Response::json(['ok' => true, 'id' => $id, 'event_key' => $eventKey], 201);
     }
 

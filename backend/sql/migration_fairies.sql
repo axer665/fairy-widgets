@@ -1,25 +1,7 @@
-CREATE TABLE users (
-  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  login VARCHAR(64) NOT NULL UNIQUE,
-  email VARCHAR(255) NOT NULL UNIQUE,
-  password_hash VARCHAR(255) NOT NULL,
-  role ENUM('client', 'moderator') NOT NULL DEFAULT 'client',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- Миграция: феи, назначение событий, выполнения, журнал сбоев.
+-- Выполните после бэкапа. Если в widget_applications ещё есть widget_token / standard_behavior — строки 1–2 создадут фей и перенесут токен.
 
-CREATE TABLE widget_applications (
-  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  user_id INT UNSIGNED NOT NULL,
-  site_url VARCHAR(2048) NOT NULL,
-  status ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'pending',
-  moderator_note VARCHAR(512) NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-  INDEX idx_user (user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE widget_fairies (
+CREATE TABLE IF NOT EXISTS widget_fairies (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   application_id INT UNSIGNED NOT NULL,
   name VARCHAR(128) NOT NULL DEFAULT 'Фея',
@@ -33,28 +15,7 @@ CREATE TABLE widget_fairies (
   INDEX idx_app (application_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE widget_views (
-  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  application_id INT UNSIGNED NOT NULL,
-  page_url VARCHAR(2048) NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (application_id) REFERENCES widget_applications(id) ON DELETE CASCADE,
-  INDEX idx_app_created (application_id, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE widget_events (
-  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  application_id INT UNSIGNED NOT NULL,
-  event_key VARCHAR(64) NOT NULL,
-  phrase VARCHAR(2000) NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  FOREIGN KEY (application_id) REFERENCES widget_applications(id) ON DELETE CASCADE,
-  UNIQUE KEY uq_app_event_key (application_id, event_key),
-  INDEX idx_app (application_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE fairy_events (
+CREATE TABLE IF NOT EXISTS fairy_events (
   fairy_id INT UNSIGNED NOT NULL,
   widget_event_id INT UNSIGNED NOT NULL,
   PRIMARY KEY (fairy_id, widget_event_id),
@@ -62,7 +23,7 @@ CREATE TABLE fairy_events (
   FOREIGN KEY (widget_event_id) REFERENCES widget_events(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE widget_event_executions (
+CREATE TABLE IF NOT EXISTS widget_event_executions (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   fairy_id INT UNSIGNED NOT NULL,
   widget_event_id INT UNSIGNED NULL,
@@ -75,7 +36,7 @@ CREATE TABLE widget_event_executions (
   INDEX idx_event_open (widget_event_id, completed_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE widget_event_failures (
+CREATE TABLE IF NOT EXISTS widget_event_failures (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   application_id INT UNSIGNED NOT NULL,
   fairy_id INT UNSIGNED NOT NULL,
@@ -94,10 +55,20 @@ CREATE TABLE widget_event_failures (
   INDEX idx_app_created (application_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO users (login, email, password_hash, role)
-VALUES (
-  'admin',
-  'admin@local.test',
-  '$2y$10$2yJnNdEDp1rEh7YzoHULNeNqJahak3KWdhy9MbpCcGXRMHapKHW.C',
-  'moderator'
-);
+-- Одна фея на заявку из старых колонок (только если колонки ещё есть).
+INSERT INTO widget_fairies (application_id, name, widget_token, standard_behavior)
+SELECT a.id, 'Фея', a.widget_token, 0
+FROM widget_applications a
+WHERE a.status = 'approved'
+  AND a.widget_token IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM widget_fairies f WHERE f.application_id = a.id);
+
+-- Назначить все события заявки каждой её фее
+INSERT IGNORE INTO fairy_events (fairy_id, widget_event_id)
+SELECT f.id, e.id
+FROM widget_fairies f
+INNER JOIN widget_events e ON e.application_id = f.application_id;
+
+-- После выката кода, при желании убрать устаревшие колонки с заявки:
+-- ALTER TABLE widget_applications DROP COLUMN widget_token;
+-- ALTER TABLE widget_applications DROP COLUMN standard_behavior;

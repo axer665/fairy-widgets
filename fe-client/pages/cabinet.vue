@@ -22,35 +22,110 @@
         </div>
         <p class="url">{{ a.site_url }}</p>
         <p v-if="a.moderator_note" class="note">Комментарий: {{ a.moderator_note }}</p>
-        <div v-if="a.embed_snippet" class="embed">
-          <p>Код для сайта:</p>
-          <pre>{{ a.embed_snippet }}</pre>
-          <p v-if="a.widget_call_hint" class="hint">{{ a.widget_call_hint }}</p>
-        </div>
-        <label v-if="a.status === 'approved' && a.embed_snippet" class="std-behavior">
-          <input
-            type="checkbox"
-            :checked="a.standard_behavior"
-            :disabled="stdBehaviorPending[a.id]"
-            @change="setStandardBehavior(a, $event)"
-          />
-          <span>Стандартное поведение: через несколько секунд фея сама вылетает, говорит приветствие и улетает (как раньше). Без галочки фея реагирует только на <code>show("ключ")</code>.</span>
-        </label>
-        <div v-if="a.status === 'approved'" class="events card-inner">
-          <h3>События феи</h3>
-          <p class="muted small">Ключ (латиница, цифры, _ и -) передаётся в <code>myLittleFairyWidget.show("ключ")</code></p>
-          <ul v-if="a.events?.length" class="evlist">
-            <li v-for="e in a.events" :key="e.id">
-              <code>{{ e.event_key }}</code> — {{ e.phrase }}
-            </li>
-          </ul>
-          <p v-else class="muted small">Пока нет событий</p>
-          <form class="evform" @submit.prevent="addEvent(a)">
-            <input v-model="eventForms[a.id].key" placeholder="ключ, напр. promo" pattern="[a-zA-Z0-9_-]{1,64}" required />
-            <textarea v-model="eventForms[a.id].phrase" placeholder="Текст для феи" rows="2" required />
-            <button type="submit" class="btn primary sm" :disabled="eventPending[a.id]">Добавить / обновить</button>
-          </form>
-        </div>
+
+        <template v-if="a.status === 'approved'">
+          <p class="muted small help-top">
+            У заявки может быть несколько фей (отдельный скрипт и токен). Одно и то же событие можно назначить нескольким феям, но
+            одновременно его выполнит только одна. Если фея занята или событие уже выполняется у другой феи, вызов
+            <code>show</code> не сработает — запись попадёт в журнал сбоев ниже.
+          </p>
+
+          <div v-for="f in a.fairies" :key="f.id" class="fairy-block card-inner">
+            <div class="fairy-head">
+              <input
+                v-model="f.name"
+                class="fairy-name-input"
+                type="text"
+                maxlength="128"
+                @blur="saveFairyName(f)"
+              />
+              <label class="std-inline">
+                <input
+                  type="checkbox"
+                  :checked="f.standard_behavior"
+                  :disabled="stdBehaviorPending[f.id]"
+                  @change="setFairyStandard(f, $event)"
+                />
+                стандартное приветствие
+              </label>
+            </div>
+            <div class="embed">
+              <p>Код для сайта (эта фея):</p>
+              <pre>{{ f.embed_snippet }}</pre>
+            </div>
+            <div v-if="a.events?.length" class="assign">
+              <p class="muted small">События для этой феи (можно несколько):</p>
+              <ul class="chk-list">
+                <li v-for="e in a.events" :key="e.id">
+                  <label>
+                    <input
+                      type="checkbox"
+                      :checked="isEventChecked(f.id, e.id)"
+                      @change="toggleEvent(f.id, e.id, $event)"
+                    />
+                    <code>{{ e.event_key }}</code>
+                    <span class="phrase-preview">{{ e.phrase }}</span>
+                  </label>
+                </li>
+              </ul>
+              <button
+                type="button"
+                class="btn primary sm"
+                :disabled="assignPending[f.id]"
+                @click="saveAssignments(a, f)"
+              >
+                Сохранить назначения
+              </button>
+            </div>
+            <p v-else class="muted small">Сначала добавьте события в блоке ниже — затем назначьте их феям.</p>
+          </div>
+
+          <button
+            v-if="a.fairies.length > 0"
+            type="button"
+            class="btn sm secondary"
+            :disabled="fairyCreatePending[a.id]"
+            @click="addFairy(a)"
+          >
+            Добавить фею
+          </button>
+
+          <div v-if="a.fairies.length === 0" class="muted small">Ожидайте одобрения модератором — появится первая фея.</div>
+
+          <div class="events card-inner">
+            <h3>События (ключи для <code>show("ключ")</code>)</h3>
+            <p class="muted small">Несколько событий с разными ключами; повтор ключа обновляет текст. Новое событие по умолчанию назначается всем феям этой заявки.</p>
+            <ul v-if="a.events?.length" class="evlist">
+              <li v-for="e in a.events" :key="e.id">
+                <code>{{ e.event_key }}</code> — {{ e.phrase }}
+              </li>
+            </ul>
+            <p v-else class="muted small">Пока нет событий</p>
+            <form class="evform" @submit.prevent="addEvent(a)">
+              <input v-model="eventForms[a.id].key" placeholder="ключ, напр. promo" pattern="[a-zA-Z0-9_-]{1,64}" required />
+              <textarea v-model="eventForms[a.id].phrase" placeholder="Текст для феи" rows="2" required />
+              <button type="submit" class="btn primary sm" :disabled="eventPending[a.id]">Добавить / обновить</button>
+            </form>
+          </div>
+
+          <div class="failures card-inner">
+            <h3>Журнал сбоев выполнения</h3>
+            <p v-if="!failureRows[a.id]?.length" class="muted small">Пока записей нет</p>
+            <ul v-else class="fail-list">
+              <li v-for="row in failureRows[a.id]" :key="row.id">
+                <time class="fail-time">{{ formatFailTime(row.created_at) }}</time>
+                <span class="fail-fairy">{{ row.fairy_name }}</span>
+                —
+                <span class="fail-key">{{ formatEventKey(row.event_key) }}</span>
+                <span class="fail-reason">({{ reasonLabel(row.reason_code) }})</span>
+                <p v-if="row.detail" class="fail-detail">{{ row.detail }}</p>
+                <p v-if="row.blocker_event_key || row.blocker_execution_id" class="fail-blocker">
+                  {{ failureBlockerText(row) }}
+                </p>
+              </li>
+            </ul>
+          </div>
+        </template>
       </li>
     </ul>
   </section>
@@ -69,15 +144,36 @@ type WidgetEventRow = {
   phrase: string;
 };
 
+type FairyRow = {
+  id: number;
+  name: string;
+  standard_behavior: boolean;
+  embed_snippet: string;
+  assigned_event_ids: number[];
+};
+
 type AppRow = {
   id: number;
   site_url: string;
   status: string;
-  embed_snippet: string | null;
-  widget_call_hint: string | null;
   moderator_note: string | null;
-  standard_behavior: boolean;
+  fairies: FairyRow[];
   events?: WidgetEventRow[];
+};
+
+type FailureRow = {
+  id: number;
+  fairy_id: number;
+  fairy_name: string;
+  widget_event_id: number | null;
+  event_key: string;
+  reason_code: string;
+  detail: string | null;
+  blocker_execution_id: number | null;
+  blocker_fairy_id: number | null;
+  blocker_widget_event_id: number | null;
+  blocker_event_key: string | null;
+  created_at: string;
 };
 
 const { api } = useApi();
@@ -90,9 +186,40 @@ const createPending = ref(false);
 const eventForms = ref<Record<number, { key: string; phrase: string }>>({});
 const eventPending = ref<Record<number, boolean>>({});
 const stdBehaviorPending = ref<Record<number, boolean>>({});
+const assignPending = ref<Record<number, boolean>>({});
+const fairyCreatePending = ref<Record<number, boolean>>({});
+const eventSelection = ref<Record<number, number[]>>({});
+const failureRows = ref<Record<number, FailureRow[]>>({});
 
 function ensureEventForm(id: number) {
   if (!eventForms.value[id]) eventForms.value[id] = { key: "", phrase: "" };
+}
+
+function ensureSelection(fairyId: number, ids: number[]) {
+  eventSelection.value[fairyId] = [...ids].sort((x, y) => x - y);
+}
+
+function isEventChecked(fairyId: number, eventId: number) {
+  return (eventSelection.value[fairyId] ?? []).includes(eventId);
+}
+
+function toggleEvent(fairyId: number, eventId: number, ev: Event) {
+  const checked = (ev.target as HTMLInputElement).checked;
+  const cur = [...(eventSelection.value[fairyId] ?? [])];
+  if (checked) {
+    if (!cur.includes(eventId)) cur.push(eventId);
+  } else {
+    const i = cur.indexOf(eventId);
+    if (i >= 0) cur.splice(i, 1);
+  }
+  eventSelection.value[fairyId] = cur;
+}
+
+function failureBlockerText(row: FailureRow): string {
+  let s = "Блокировка: выполнение #" + String(row.blocker_execution_id ?? "");
+  if (row.blocker_event_key) s += ", событие «" + row.blocker_event_key + "»";
+  if (row.blocker_fairy_id) s += " (фея id " + row.blocker_fairy_id + ")";
+  return s;
 }
 
 function statusLabel(s: string) {
@@ -102,6 +229,42 @@ function statusLabel(s: string) {
   return s;
 }
 
+function reasonLabel(code: string) {
+  const m: Record<string, string> = {
+    fairy_busy: "фея была занята другим показом",
+    event_locked_other_fairy: "то же событие уже выполняла другая фея",
+    event_not_assigned: "событие не назначено этой фее",
+    event_not_found: "событие с таким ключом не найдено",
+    standard_not_enabled: "стандартное поведение выключено",
+  };
+  return m[code] ?? code;
+}
+
+function formatEventKey(k: string) {
+  if (k === "_standard") return "стандартное приветствие";
+  return k;
+}
+
+function formatFailTime(iso: string) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString();
+  } catch {
+    return iso;
+  }
+}
+
+async function loadFailures(appId: number) {
+  try {
+    const res = await api<{ failures: FailureRow[] }>(`/api/applications/${appId}/event-failures?limit=50`, {
+      method: "GET",
+    });
+    failureRows.value[appId] = res.failures;
+  } catch {
+    failureRows.value[appId] = [];
+  }
+}
+
 async function load() {
   loadError.value = "";
   try {
@@ -109,6 +272,10 @@ async function load() {
     apps.value = res.applications;
     for (const a of apps.value) {
       ensureEventForm(a.id);
+      if (!a.fairies) a.fairies = [];
+      for (const f of a.fairies) {
+        ensureSelection(f.id, [...f.assigned_event_ids]);
+      }
       if (a.status !== "approved") continue;
       try {
         const ev = await api<{ events: WidgetEventRow[] }>(`/api/applications/${a.id}/events`, { method: "GET" });
@@ -116,28 +283,74 @@ async function load() {
       } catch {
         a.events = [];
       }
+      await loadFailures(a.id);
     }
   } catch {
     loadError.value = "Не удалось загрузить заявки";
   }
 }
 
-async function setStandardBehavior(a: AppRow, ev: Event) {
+async function saveFairyName(f: FairyRow) {
+  const name = f.name.trim() || "Фея";
+  f.name = name;
+  try {
+    await api(`/api/fairies/${f.id}`, {
+      method: "PUT",
+      body: JSON.stringify({ name }),
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
+async function setFairyStandard(f: FairyRow, ev: Event) {
   const input = ev.target as HTMLInputElement;
   const next = input.checked;
-  const prev = a.standard_behavior;
-  a.standard_behavior = next;
-  stdBehaviorPending.value[a.id] = true;
+  const prev = f.standard_behavior;
+  f.standard_behavior = next;
+  stdBehaviorPending.value[f.id] = true;
   try {
-    await api<{ ok: boolean; standard_behavior: boolean }>(`/api/applications/${a.id}`, {
+    await api(`/api/fairies/${f.id}`, {
       method: "PUT",
       body: JSON.stringify({ standard_behavior: next }),
     });
   } catch {
-    a.standard_behavior = prev;
+    f.standard_behavior = prev;
     input.checked = prev;
   } finally {
-    stdBehaviorPending.value[a.id] = false;
+    stdBehaviorPending.value[f.id] = false;
+  }
+}
+
+async function saveAssignments(_a: AppRow, f: FairyRow) {
+  assignPending.value[f.id] = true;
+  const ids = [...(eventSelection.value[f.id] ?? [])];
+  try {
+    await api(`/api/fairies/${f.id}/events`, {
+      method: "PUT",
+      body: JSON.stringify({ event_ids: ids }),
+    });
+    f.assigned_event_ids = [...ids].sort((x, y) => x - y);
+  } catch {
+    /* revert visual from server on reload */
+    await load();
+  } finally {
+    assignPending.value[f.id] = false;
+  }
+}
+
+async function addFairy(a: AppRow) {
+  fairyCreatePending.value[a.id] = true;
+  try {
+    await api(`/api/applications/${a.id}/fairies`, {
+      method: "POST",
+      body: JSON.stringify({ name: `Фея ${a.fairies.length + 1}` }),
+    });
+    await load();
+  } catch {
+    /* */
+  } finally {
+    fairyCreatePending.value[a.id] = false;
   }
 }
 
@@ -249,6 +462,37 @@ input {
   color: #f28b82;
   font-size: 0.9rem;
 }
+.help-top {
+  margin: 0 0 12px;
+}
+.fairy-block {
+  margin-top: 12px;
+}
+.fairy-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.fairy-name-input {
+  flex: 1 1 160px;
+  max-width: 280px;
+  padding: 8px 10px;
+  font-weight: 600;
+}
+.std-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  margin: 0;
+  font-size: 0.88rem;
+}
+.std-inline input {
+  margin: 0;
+  accent-color: #1a73e8;
+}
 .embed pre {
   background: #0f1115;
   padding: 12px;
@@ -257,31 +501,38 @@ input {
   font-size: 0.8rem;
   border: 1px solid #2e3238;
 }
-.embed .hint {
-  margin-top: 10px;
-  font-size: 0.85rem;
-  color: #9aa0a6;
+.assign {
+  margin-top: 12px;
 }
-.std-behavior {
-  display: flex;
-  gap: 10px;
+.chk-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 12px;
+  font-size: 0.86rem;
+}
+.chk-list li {
+  margin-bottom: 8px;
+}
+.chk-list label {
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: flex-start;
-  margin: 14px 0 0;
-  padding: 12px 14px;
-  border-radius: 8px;
-  border: 1px solid #2e3238;
-  background: #171a20;
-  font-size: 0.88rem;
-  color: #bdc1c6;
+  gap: 8px;
   cursor: pointer;
 }
-.std-behavior input {
+.chk-list input {
   margin-top: 3px;
-  flex-shrink: 0;
-  accent-color: #1a73e8;
 }
-.std-behavior span code {
-  font-size: 0.9em;
+.phrase-preview {
+  color: #9aa0a6;
+  flex: 1 1 100%;
+  margin-left: 24px;
+  font-size: 0.82rem;
+}
+.btn.secondary {
+  margin-top: 8px;
+  background: #3c4043;
+  color: #e8eaed;
 }
 .card-inner {
   margin-top: 14px;
@@ -328,6 +579,38 @@ input {
   flex: 2 1 200px;
   min-height: 56px;
   resize: vertical;
+}
+.fail-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.85rem;
+  color: #bdc1c6;
+}
+.fail-list li {
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #2a2d33;
+}
+.fail-time {
+  color: #9aa0a6;
+  margin-right: 8px;
+}
+.fail-fairy {
+  font-weight: 600;
+  color: #e8eaed;
+}
+.fail-reason {
+  color: #f28b82;
+}
+.fail-detail,
+.fail-blocker {
+  margin: 6px 0 0;
+  font-size: 0.82rem;
+  color: #9aa0a6;
+}
+.fail-blocker code {
+  font-size: 0.9em;
 }
 .btn.sm {
   padding: 8px 14px;
