@@ -76,7 +76,7 @@ final class WidgetController
   var SPRITE_H = 106;
   var WIDGET_W = 180;
   var START_RIGHT = -220;
-  var FLY_IN_RIGHT = -20;
+  var FLY_IN_RIGHT = 300;
   var FLY_MS = 900;
   var MESSAGE_DELAY_MS = 5000;
   var REMOVE_DELAY_MS = 5000;
@@ -109,7 +109,7 @@ final class WidgetController
       var host = document.createElement("div");
       host.setAttribute("data-widget", "ok");
       host.style.cssText =
-        "position:fixed;right:" + START_RIGHT + "px;bottom:16px;z-index:2147483647;" +
+        "position:fixed;right:" + START_RIGHT + "px;bottom:100px;z-index:2147483647;" +
         "width:" + WIDGET_W + "px;height:170px;pointer-events:none;opacity:1;";
 
       var fairy = document.createElement("div");
