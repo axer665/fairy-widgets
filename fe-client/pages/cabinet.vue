@@ -27,6 +27,15 @@
           <pre>{{ a.embed_snippet }}</pre>
           <p v-if="a.widget_call_hint" class="hint">{{ a.widget_call_hint }}</p>
         </div>
+        <label v-if="a.status === 'approved' && a.embed_snippet" class="std-behavior">
+          <input
+            type="checkbox"
+            :checked="a.standard_behavior"
+            :disabled="stdBehaviorPending[a.id]"
+            @change="setStandardBehavior(a, $event)"
+          />
+          <span>Стандартное поведение: через несколько секунд фея сама вылетает, говорит приветствие и улетает (как раньше). Без галочки фея реагирует только на <code>show("ключ")</code>.</span>
+        </label>
         <div v-if="a.status === 'approved'" class="events card-inner">
           <h3>События феи</h3>
           <p class="muted small">Ключ (латиница, цифры, _ и -) передаётся в <code>myLittleFairyWidget.show("ключ")</code></p>
@@ -67,6 +76,7 @@ type AppRow = {
   embed_snippet: string | null;
   widget_call_hint: string | null;
   moderator_note: string | null;
+  standard_behavior: boolean;
   events?: WidgetEventRow[];
 };
 
@@ -79,6 +89,7 @@ const createError = ref("");
 const createPending = ref(false);
 const eventForms = ref<Record<number, { key: string; phrase: string }>>({});
 const eventPending = ref<Record<number, boolean>>({});
+const stdBehaviorPending = ref<Record<number, boolean>>({});
 
 function ensureEventForm(id: number) {
   if (!eventForms.value[id]) eventForms.value[id] = { key: "", phrase: "" };
@@ -108,6 +119,25 @@ async function load() {
     }
   } catch {
     loadError.value = "Не удалось загрузить заявки";
+  }
+}
+
+async function setStandardBehavior(a: AppRow, ev: Event) {
+  const input = ev.target as HTMLInputElement;
+  const next = input.checked;
+  const prev = a.standard_behavior;
+  a.standard_behavior = next;
+  stdBehaviorPending.value[a.id] = true;
+  try {
+    await api<{ ok: boolean; standard_behavior: boolean }>(`/api/applications/${a.id}`, {
+      method: "PUT",
+      body: JSON.stringify({ standard_behavior: next }),
+    });
+  } catch {
+    a.standard_behavior = prev;
+    input.checked = prev;
+  } finally {
+    stdBehaviorPending.value[a.id] = false;
   }
 }
 
@@ -231,6 +261,27 @@ input {
   margin-top: 10px;
   font-size: 0.85rem;
   color: #9aa0a6;
+}
+.std-behavior {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 14px 0 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid #2e3238;
+  background: #171a20;
+  font-size: 0.88rem;
+  color: #bdc1c6;
+  cursor: pointer;
+}
+.std-behavior input {
+  margin-top: 3px;
+  flex-shrink: 0;
+  accent-color: #1a73e8;
+}
+.std-behavior span code {
+  font-size: 0.9em;
 }
 .card-inner {
   margin-top: 14px;

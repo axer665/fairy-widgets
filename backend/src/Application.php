@@ -52,6 +52,7 @@ final class Application
         $this->router->add('GET', '/api/me', $authCtrl->me(...), [$json, $auth, $log]);
         $this->router->add('GET', '/api/applications', $appCtrl->list(...), [$json, $auth, $log]);
         $this->router->add('POST', '/api/applications', $appCtrl->create(...), [$json, $auth, $log]);
+        $this->router->add('PUT', '/api/applications/{id}', $appCtrl->update(...), [$json, $auth, $log]);
         $this->router->add(
             'GET',
             '/api/applications/{id}/events',

@@ -14,6 +14,7 @@ CREATE TABLE widget_applications (
   status ENUM('pending', 'approved', 'rejected') NOT NULL DEFAULT 'pending',
   widget_token VARCHAR(64) NULL UNIQUE,
   moderator_note VARCHAR(512) NULL,
+  standard_behavior TINYINT(1) NOT NULL DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,

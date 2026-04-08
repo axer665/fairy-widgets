@@ -36,7 +36,8 @@ final class WidgetController
 
         $apiBase = $this->appUrl;
         $appId = (int) $app['id'];
-        $js = $this->buildWidgetJs($apiBase, $token, $appId);
+        $standardBehavior = (bool) (int) ($app['standard_behavior'] ?? 0);
+        $js = $this->buildWidgetJs($apiBase, $token, $appId, $standardBehavior);
         return Response::text($js, 200, [
             'Content-Type' => 'application/javascript; charset=utf-8',
             'Cache-Control' => 'no-store',
@@ -70,7 +71,7 @@ final class WidgetController
     private function getApprovedApplicationForEmbed(Request $request, string $token): ?array
     {
         $st = $this->db->pdo()->prepare(
-            'SELECT id, site_url, status, widget_token FROM widget_applications
+            'SELECT id, site_url, status, widget_token, standard_behavior FROM widget_applications
              WHERE widget_token = ? AND status = ? LIMIT 1',
         );
         $st->execute([$token, 'approved']);
@@ -90,15 +91,24 @@ final class WidgetController
         return $app;
     }
 
-    private function buildWidgetJs(string $apiBase, string $widgetToken, int $applicationId): string
-    {
+    private function buildWidgetJs(
+        string $apiBase,
+        string $widgetToken,
+        int $applicationId,
+        bool $standardBehavior,
+    ): string {
         $api = addslashes($apiBase);
         $tok = addslashes($widgetToken);
+        $stdJs = $standardBehavior ? 'true' : 'false';
+        $defaultPhrase = addslashes('Привет! Я фея виджета.');
         return <<<JS
 (function(){
   var API = "{$api}";
   var TOKEN = "{$tok}";
   var APP_ID = {$applicationId};
+  var STANDARD_BEHAVIOR = {$stdJs};
+  var DEFAULT_PHRASE = "{$defaultPhrase}";
+  var WAIT_BEFORE_FLY_MS = 10000;
   var SPRITE_URL = API + "/widget/fairy-sprite.png";
   var FRAME_W = 128;
   var FRAME_H = 106;
@@ -114,8 +124,8 @@ final class WidgetController
   var FLY_MS = 900;
   var MESSAGE_DELAY_MS = 5000;
   var REMOVE_DELAY_MS = 5000;
-  var INTRO_DELAY_MS = 0;
   var busy = false;
+  var autoTimer = null;
   function pageUrl(){ try { return location.href.split("#")[0]; } catch(e){ return ""; } }
   function track(){
     var url = pageUrl();
@@ -154,7 +164,9 @@ final class WidgetController
     img.src = url;
     if (img.complete && img.naturalWidth > 0) finish(true);
   }
-  function runFairySequence(phrase, spriteOk){
+  function runFairySequence(phrase, spriteOk, introMs){
+    busy = true;
+    introMs = introMs || 0;
     if (!spriteOk) console.warn("widget: sprite failed to load", SPRITE_URL);
     var host = document.createElement("div");
     host.setAttribute("data-widget", "ok");
@@ -234,11 +246,12 @@ final class WidgetController
           }, FLY_MS);
         }, MESSAGE_DELAY_MS);
       }, FLY_MS);
-    }, INTRO_DELAY_MS);
+    }, introMs);
   }
 
   function show(eventKey){
     if (busy) return;
+    if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
     var key = String(eventKey || "").trim();
     if (!key) {
       console.error("myLittleFairyWidget.show: передайте ключ события (строка), см. кабинет");
@@ -255,7 +268,7 @@ final class WidgetController
         var text = String(data.phrase || "");
         if (!text) throw new Error();
         preloadImage(SPRITE_URL, function(ok){
-          runFairySequence(text, ok);
+          runFairySequence(text, ok, 0);
         });
       })
       .catch(function(){
@@ -268,6 +281,15 @@ final class WidgetController
     track();
     if (window.myLittleFairyWidget) return;
     window.myLittleFairyWidget = { show: show, version: "1" };
+    if (STANDARD_BEHAVIOR) {
+      preloadImage(SPRITE_URL, function(ok){
+        autoTimer = setTimeout(function(){
+          autoTimer = null;
+          if (busy) return;
+          runFairySequence(DEFAULT_PHRASE, ok, 0);
+        }, WAIT_BEFORE_FLY_MS);
+      });
+    }
   }
   boot();
 })();
