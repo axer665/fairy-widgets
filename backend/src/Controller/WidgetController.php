@@ -258,10 +258,20 @@ final class WidgetController
                 if ($other) {
                     $otherFairyId = (int) $other['fairy_id'];
                     $bk = $this->blockerEventKey($pdo, (int) $other['id']);
+                    $logFairyId = (int) $fairyIds[0];
+                    foreach ($fairyIds as $fidRaw) {
+                        $cand = (int) $fidRaw;
+                        if ($cand !== $otherFairyId) {
+                            $logFairyId = $cand;
+                            break;
+                        }
+                    }
+                    $pdo->query('SELECT RELEASE_LOCK(' . $pdo->quote($lockName) . ')');
+                    $pdo->commit();
                     $this->insertFailure(
                         $pdo,
                         $appId,
-                        (int) $fairyIds[0],
+                        $logFairyId,
                         $widgetEventId,
                         $eventKey,
                         self::REASON_EVENT_LOCKED,
@@ -273,8 +283,6 @@ final class WidgetController
                             'blocker_event_key' => $bk,
                         ],
                     );
-                    $pdo->query('SELECT RELEASE_LOCK(' . $pdo->quote($lockName) . ')');
-                    $pdo->commit();
 
                     return Response::json(
                         ['error' => 'conflict', 'reason' => self::REASON_EVENT_LOCKED],
@@ -307,6 +315,8 @@ final class WidgetController
                         'phrase' => $phrase,
                     ]);
                 }
+                $pdo->query('SELECT RELEASE_LOCK(' . $pdo->quote($lockName) . ')');
+                $pdo->commit();
                 $this->insertFailure(
                     $pdo,
                     $appId,
@@ -317,8 +327,8 @@ final class WidgetController
                     'Все феи с этим событием заняты',
                     null,
                 );
-                $pdo->query('SELECT RELEASE_LOCK(' . $pdo->quote($lockName) . ')');
-                $pdo->commit();
+
+                return Response::json(['error' => 'conflict', 'reason' => self::REASON_ALL_FAIRIES_BUSY], 409);
             } catch (PDOException $e) {
                 $pdo->query('SELECT RELEASE_LOCK(' . $pdo->quote($lockName) . ')');
                 throw $e;
@@ -331,7 +341,7 @@ final class WidgetController
             return Response::json(['error' => 'server'], 500);
         }
 
-        return Response::json(['error' => 'conflict', 'reason' => self::REASON_ALL_FAIRIES_BUSY], 409);
+        return Response::json(['error' => 'server'], 500);
     }
 
     private function blockerEventKey(PDO $pdo, int $executionId): ?string

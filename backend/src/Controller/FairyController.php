@@ -242,9 +242,9 @@ final class FairyController
             'SELECT f.id, f.fairy_id, f.widget_event_id, f.event_key, f.reason_code, f.detail,
                     f.blocker_execution_id, f.blocker_fairy_id, f.blocker_widget_event_id, f.blocker_event_key,
                     f.created_at,
-                    wf.name AS fairy_name
+                    COALESCE(wf.name, CONCAT(\'Фея #\', f.fairy_id)) AS fairy_name
              FROM widget_event_failures f
-             JOIN widget_fairies wf ON wf.id = f.fairy_id
+             LEFT JOIN widget_fairies wf ON wf.id = f.fairy_id
              WHERE f.application_id = ?
              ORDER BY f.id DESC
              LIMIT ' . $limit,

@@ -27,8 +27,8 @@
           <p class="muted small help-top">
             На сайт вставляется один скрипт с токеном заявки. Феи и события настраиваются только здесь; при вызове
             <code>myLittleFairyWidget.show("ключ")</code> сервер сам выбирает фею, проверяет занятость и блокировку
-            события. Событие <code>_standard</code> — то же самое по смыслу, что и остальные: текст в списке событий,
-            назначение феям; если оно назначено, после загрузки страницы виджет сам вызовет его (как
+            события. Автоприветствие — это событие <code>_standard</code>: отредактируйте текст в блоке событий и
+            отметьте его у нужных фей; после загрузки страницы виджет сам вызовет его (как
             <code>show("_standard")</code>).
           </p>
 
@@ -46,15 +46,6 @@
                 maxlength="128"
                 @blur="saveFairyName(f)"
               />
-              <label class="std-inline">
-                <input
-                  type="checkbox"
-                  :checked="f.standard_behavior"
-                  :disabled="stdBehaviorPending[f.id]"
-                  @change="setFairyStandard(f, $event)"
-                />
-                стандартное приветствие
-              </label>
             </div>
             <div v-if="a.events?.length" class="assign">
               <p class="muted small">События для этой феи (можно несколько):</p>
@@ -150,7 +141,6 @@ type WidgetEventRow = {
 type FairyRow = {
   id: number;
   name: string;
-  standard_behavior: boolean;
   assigned_event_ids: number[];
 };
 
@@ -188,7 +178,6 @@ const createError = ref("");
 const createPending = ref(false);
 const eventForms = ref<Record<number, { key: string; phrase: string }>>({});
 const eventPending = ref<Record<number, boolean>>({});
-const stdBehaviorPending = ref<Record<number, boolean>>({});
 const assignPending = ref<Record<number, boolean>>({});
 const fairyCreatePending = ref<Record<number, boolean>>({});
 const eventSelection = ref<Record<number, number[]>>({});
@@ -220,7 +209,7 @@ function toggleEvent(fairyId: number, eventId: number, ev: Event) {
 
 function failureBlockerText(row: FailureRow): string {
   let s = "Блокировка: выполнение #" + String(row.blocker_execution_id ?? "");
-  if (row.blocker_event_key) s += ", событие «" + row.blocker_event_key + "»";
+  if (row.blocker_event_key) s += ", событие «" + formatEventKey(row.blocker_event_key) + "»";
   if (row.blocker_fairy_id) s += " (фея id " + row.blocker_fairy_id + ")";
   return s;
 }
@@ -304,25 +293,6 @@ async function saveFairyName(f: FairyRow) {
     });
   } catch {
     /* ignore */
-  }
-}
-
-async function setFairyStandard(f: FairyRow, ev: Event) {
-  const input = ev.target as HTMLInputElement;
-  const next = input.checked;
-  const prev = f.standard_behavior;
-  f.standard_behavior = next;
-  stdBehaviorPending.value[f.id] = true;
-  try {
-    await api(`/api/fairies/${f.id}`, {
-      method: "PUT",
-      body: JSON.stringify({ standard_behavior: next }),
-    });
-  } catch {
-    f.standard_behavior = prev;
-    input.checked = prev;
-  } finally {
-    stdBehaviorPending.value[f.id] = false;
   }
 }
 
@@ -484,18 +454,6 @@ input {
   max-width: 280px;
   padding: 8px 10px;
   font-weight: 600;
-}
-.std-inline {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  margin: 0;
-  font-size: 0.88rem;
-}
-.std-inline input {
-  margin: 0;
-  accent-color: #1a73e8;
 }
 .embed pre {
   background: #0f1115;
