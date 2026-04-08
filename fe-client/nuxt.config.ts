@@ -13,6 +13,10 @@ const devOriginUrl = (() => {
 
 export default defineNuxtConfig({
   ssr: true,
+  /** Разрешённые значения quality для <NuxtImg> / IPX (см. предупреждение в dev). */
+  images: {
+    qualities: [75, 88],
+  },
   devtools: { enabled: false },
   devServer: {
     host: "0.0.0.0",
