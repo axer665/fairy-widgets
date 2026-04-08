@@ -79,7 +79,7 @@ final class WidgetController
   var FLY_FROM_RIGHT_OVERFLOW = 220;
   var FLY_FROM_BOTTOM = 0;
   var FLY_TO_RIGHT_INSET = 150;
-  var FLY_TO_TOP = 50;
+  var FLY_TO_BOTTOM = 230;
   var FLY_MS = 900;
   var MESSAGE_DELAY_MS = 5000;
   var REMOVE_DELAY_MS = 5000;
@@ -103,9 +103,10 @@ final class WidgetController
   }
   function flyToXY(){
     var vw = window.innerWidth;
+    var vh = window.innerHeight;
     return {
       x: vw - FLY_TO_RIGHT_INSET - WIDGET_W,
-      y: FLY_TO_TOP
+      y: vh - WIDGET_H - FLY_TO_BOTTOM
     };
   }
   function preloadImage(url, onDone){
