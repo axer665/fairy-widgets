@@ -13,7 +13,8 @@ use PDOException;
 
 final class WidgetController
 {
-    private const STALE_EXECUTION_SECONDS = 900;
+    /** Показ ~25 с + пауза до авто ~10 с; вкладка в фоне сильно режет таймеры — запас 2–3 мин. */
+    private const STALE_EXECUTION_SECONDS = 180;
 
     public const REASON_FAIRY_BUSY = 'fairy_busy';
     public const REASON_EVENT_LOCKED = 'event_locked_other_fairy';
@@ -249,6 +250,7 @@ final class WidgetController
                 return Response::json(['error' => 'server', 'message' => 'lock'], 503);
             }
             try {
+                $this->closeStaleOpenExecutionsForWidgetEvent($pdo, $widgetEventId);
                 $ost = $pdo->prepare(
                     'SELECT id, fairy_id FROM widget_event_executions
                      WHERE widget_event_id = ? AND completed_at IS NULL LIMIT 1 FOR UPDATE',
@@ -426,6 +428,32 @@ final class WidgetController
         ]);
     }
 
+    /** Закрывает «забытые» выполнения по этому событию (вкладка закрыта без event-complete), чтобы не блокировать ключ. */
+    private function closeStaleOpenExecutionsForWidgetEvent(PDO $pdo, int $widgetEventId): void
+    {
+        $st = $pdo->prepare(
+            'SELECT id, fairy_id, started_at FROM widget_event_executions
+             WHERE widget_event_id = ? AND completed_at IS NULL FOR UPDATE',
+        );
+        $st->execute([$widgetEventId]);
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+        $now = time();
+        foreach ($rows as $row) {
+            $started = strtotime((string) $row['started_at']);
+            if ($started === false || ($now - $started) <= self::STALE_EXECUTION_SECONDS) {
+                continue;
+            }
+            $eid = (int) $row['id'];
+            $fid = (int) $row['fairy_id'];
+            $pdo->prepare(
+                'UPDATE widget_event_executions SET completed_at = CURRENT_TIMESTAMP WHERE id = ? AND completed_at IS NULL',
+            )->execute([$eid]);
+            $pdo->prepare(
+                'UPDATE widget_fairies SET current_execution_id = NULL WHERE id = ? AND current_execution_id = ?',
+            )->execute([$fid, $eid]);
+        }
+    }
+
     private function releaseStaleExecution(PDO $pdo, int $fairyId): void
     {
         $st = $pdo->prepare(
@@ -487,6 +515,36 @@ final class WidgetController
   var MESSAGE_DELAY_MS = 5000;
   var REMOVE_DELAY_MS = 5000;
   var autoTimer = null;
+  var pendingExecutions = {};
+  function rememberPendingExecution(id){
+    if (id) pendingExecutions[id] = true;
+  }
+  function forgetPendingExecution(id){
+    delete pendingExecutions[id];
+  }
+  function beaconComplete(id){
+    if (!id) return;
+    var url = API + "/api/widget/event-complete";
+    var body = JSON.stringify({ token: TOKEN, execution_id: id });
+    try {
+      if (navigator.sendBeacon) {
+        var blob = new Blob([body], { type: "application/json" });
+        navigator.sendBeacon(url, blob);
+      } else {
+        fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body, keepalive: true });
+      }
+    } catch (e) {}
+  }
+  window.addEventListener("pagehide", function(){
+    try {
+      for (var k in pendingExecutions) {
+        if (!Object.prototype.hasOwnProperty.call(pendingExecutions, k)) continue;
+        var n = parseInt(k, 10);
+        if (n) beaconComplete(n);
+      }
+      pendingExecutions = {};
+    } catch (e) {}
+  });
   function pageUrl(){ try { return location.href.split("#")[0]; } catch(e){ return ""; } }
   function track(){
     var url = pageUrl();
@@ -533,6 +591,7 @@ final class WidgetController
     });
   }
   function completeExecution(executionId){
+    forgetPendingExecution(executionId);
     postJson("/api/widget/event-complete", { token: TOKEN, execution_id: executionId }).catch(function(){});
   }
   function runFairySequence(phrase, spriteOk, introMs, executionId){
@@ -645,6 +704,7 @@ final class WidgetController
         var eid = data.execution_id;
         var text = String(data.phrase || "");
         if (!eid || !text) throw new Error();
+        rememberPendingExecution(eid);
         preloadImage(SPRITE_URL, function(ok){
           runFairySequence(text, ok, 0, eid);
         });
@@ -668,7 +728,7 @@ final class WidgetController
   function boot(){
     track();
     if (window.myLittleFairyWidget) return;
-    window.myLittleFairyWidget = { show: show, version: "4" };
+    window.myLittleFairyWidget = { show: show, version: "5" };
     if (AUTO_STANDARD_WELCOME) {
       preloadImage(SPRITE_URL, function(){
         autoTimer = setTimeout(function(){
