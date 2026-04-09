@@ -228,7 +228,7 @@ function reasonLabel(code: string) {
     event_not_assigned: "событие не назначено этой фее",
     event_not_found: "событие с таким ключом не найдено",
     standard_not_enabled: "стандартное поведение выключено",
-    all_fairies_busy: "все подходящие феи были заняты",
+    all_fairies_busy: "в этой сессии не осталось свободной феи для показа",
   };
   return m[code] ?? code;
 }

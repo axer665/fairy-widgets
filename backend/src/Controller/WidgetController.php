@@ -122,7 +122,7 @@ final class WidgetController
         try {
             $pdo->beginTransaction();
             $st = $pdo->prepare(
-                'SELECT x.id AS ex_id, x.fairy_id, x.completed_at, f.current_execution_id
+                'SELECT x.id AS ex_id, x.fairy_id, x.completed_at
                  FROM widget_event_executions x
                  INNER JOIN widget_fairies f ON f.id = x.fairy_id
                  INNER JOIN widget_applications a ON a.id = f.application_id
@@ -145,11 +145,9 @@ final class WidgetController
             $pdo->prepare(
                 'UPDATE widget_event_executions SET completed_at = CURRENT_TIMESTAMP WHERE id = ?',
             )->execute([$executionId]);
-            if ((int) ($row['current_execution_id'] ?? 0) === $executionId) {
-                $pdo->prepare(
-                    'UPDATE widget_fairies SET current_execution_id = NULL WHERE id = ?',
-                )->execute([$fairyId]);
-            }
+            $pdo->prepare(
+                'UPDATE widget_fairies SET current_execution_id = NULL WHERE id = ? AND current_execution_id = ?',
+            )->execute([$fairyId, $executionId]);
             $pdo->commit();
         } catch (PDOException) {
             if ($pdo->inTransaction()) {
@@ -313,20 +311,24 @@ final class WidgetController
                     $fairyId = (int) $fidRaw;
                     $this->releaseStaleExecution($pdo, $fairyId);
                     $fst = $pdo->prepare(
-                        'SELECT id, current_execution_id FROM widget_fairies WHERE id = ? FOR UPDATE',
+                        'SELECT id FROM widget_fairies WHERE id = ? FOR UPDATE',
                     );
                     $fst->execute([$fairyId]);
-                    $fairy = $fst->fetch(PDO::FETCH_ASSOC);
-                    if (!$fairy || !empty($fairy['current_execution_id'])) {
+                    if (!$fst->fetch(PDO::FETCH_ASSOC)) {
+                        continue;
+                    }
+                    $busy = $pdo->prepare(
+                        'SELECT id FROM widget_event_executions
+                         WHERE fairy_id = ? AND session_key = ? AND completed_at IS NULL LIMIT 1 FOR UPDATE',
+                    );
+                    $busy->execute([$fairyId, $sessionKey]);
+                    if ($busy->fetch(PDO::FETCH_ASSOC)) {
                         continue;
                     }
                     $pdo->prepare(
                         'INSERT INTO widget_event_executions (fairy_id, widget_event_id, kind, session_key) VALUES (?,?,?,?)',
                     )->execute([$fairyId, $widgetEventId, 'event', $sessionKey]);
                     $execId = (int) $pdo->lastInsertId();
-                    $pdo->prepare(
-                        'UPDATE widget_fairies SET current_execution_id = ? WHERE id = ?',
-                    )->execute([$execId, $fairyId]);
                     $pdo->query('SELECT RELEASE_LOCK(' . $pdo->quote($lockName) . ')');
                     $pdo->commit();
 
@@ -344,7 +346,7 @@ final class WidgetController
                     $widgetEventId,
                     $eventKey,
                     self::REASON_ALL_FAIRIES_BUSY,
-                    'Все феи с этим событием заняты',
+                    'В этой сессии все подходящие феи уже заняты показом (или нет свободной для этой сессии)',
                     null,
                 );
 
@@ -472,34 +474,36 @@ final class WidgetController
         }
     }
 
+    /** Протухшие открытые выполнения по фее (любая сессия) + сброс устаревшего current_execution_id. */
     private function releaseStaleExecution(PDO $pdo, int $fairyId): void
     {
+        $pdo->prepare('SELECT id FROM widget_fairies WHERE id = ? FOR UPDATE')->execute([$fairyId]);
         $st = $pdo->prepare(
-            'SELECT current_execution_id FROM widget_fairies WHERE id = ? FOR UPDATE',
+            'SELECT id, started_at FROM widget_event_executions
+             WHERE fairy_id = ? AND completed_at IS NULL FOR UPDATE',
         );
         $st->execute([$fairyId]);
-        $cid = $st->fetchColumn();
-        if (!$cid) {
-            return;
-        }
-        $execId = (int) $cid;
-        $est = $pdo->prepare(
-            'SELECT id, started_at, completed_at FROM widget_event_executions WHERE id = ? LIMIT 1',
-        );
-        $est->execute([$execId]);
-        $ex = $est->fetch(PDO::FETCH_ASSOC);
-        if (!$ex || $ex['completed_at'] !== null) {
-            $pdo->prepare('UPDATE widget_fairies SET current_execution_id = NULL WHERE id = ?')->execute([$fairyId]);
-
-            return;
-        }
-        $started = strtotime((string) $ex['started_at']);
-        if ($started !== false && (time() - $started) > self::STALE_EXECUTION_SECONDS) {
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+        $now = time();
+        foreach ($rows as $row) {
+            $started = strtotime((string) $row['started_at']);
+            if ($started === false || ($now - $started) <= self::STALE_EXECUTION_SECONDS) {
+                continue;
+            }
+            $eid = (int) $row['id'];
             $pdo->prepare(
-                'UPDATE widget_event_executions SET completed_at = CURRENT_TIMESTAMP WHERE id = ?',
-            )->execute([$execId]);
-            $pdo->prepare('UPDATE widget_fairies SET current_execution_id = NULL WHERE id = ?')->execute([$fairyId]);
+                'UPDATE widget_event_executions SET completed_at = CURRENT_TIMESTAMP WHERE id = ? AND completed_at IS NULL',
+            )->execute([$eid]);
         }
+        $pdo->prepare(
+            'UPDATE widget_fairies f SET f.current_execution_id = NULL
+             WHERE f.id = ?
+             AND f.current_execution_id IS NOT NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM widget_event_executions x
+               WHERE x.id = f.current_execution_id AND x.completed_at IS NULL
+             )',
+        )->execute([$fairyId]);
     }
 
     private function buildWidgetJs(
@@ -765,7 +769,7 @@ final class WidgetController
   function boot(){
     track();
     if (window.myLittleFairyWidget) return;
-    window.myLittleFairyWidget = { show: show, version: "6" };
+    window.myLittleFairyWidget = { show: show, version: "7" };
     if (AUTO_STANDARD_WELCOME) {
       preloadImage(SPRITE_URL, function(){
         autoTimer = setTimeout(function(){
