@@ -66,12 +66,14 @@ CREATE TABLE widget_event_executions (
   fairy_id INT UNSIGNED NOT NULL,
   widget_event_id INT UNSIGNED NULL,
   kind ENUM('event', 'standard') NOT NULL,
+  session_key VARCHAR(64) NOT NULL,
   started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   completed_at TIMESTAMP NULL DEFAULT NULL,
   FOREIGN KEY (fairy_id) REFERENCES widget_fairies(id) ON DELETE CASCADE,
   FOREIGN KEY (widget_event_id) REFERENCES widget_events(id) ON DELETE SET NULL,
   INDEX idx_fairy_open (fairy_id, completed_at),
-  INDEX idx_event_open (widget_event_id, completed_at)
+  INDEX idx_event_open (widget_event_id, completed_at),
+  INDEX idx_event_session (widget_event_id, session_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE widget_event_failures (

@@ -86,8 +86,15 @@ final class WidgetController
         if ($eventKey === '' || !preg_match('/^[a-zA-Z0-9_-]{1,64}$/', $eventKey)) {
             return Response::json(['error' => 'validation'], 422);
         }
+        $sessionKey = $this->parseSessionKey($b);
+        if ($sessionKey === null) {
+            return Response::json(
+                ['error' => 'validation', 'message' => 'session_key: 16–64 символа [a-zA-Z0-9_-]'],
+                422,
+            );
+        }
 
-        return $this->beginEventForApplication($appId, $eventKey);
+        return $this->beginEventForApplication($appId, $eventKey, $sessionKey);
     }
 
     public function eventComplete(Request $request): Response
@@ -101,6 +108,13 @@ final class WidgetController
         if ($token === '' || $executionId < 1) {
             return Response::json(['error' => 'validation', 'message' => 'token и execution_id обязательны'], 422);
         }
+        $sessionKey = $this->parseSessionKey($b);
+        if ($sessionKey === null) {
+            return Response::json(
+                ['error' => 'validation', 'message' => 'session_key: 16–64 символа [a-zA-Z0-9_-]'],
+                422,
+            );
+        }
         if ($this->resolveApplicationForEmbed($request, $token) === null) {
             return Response::json(['error' => 'forbidden'], 403);
         }
@@ -112,10 +126,10 @@ final class WidgetController
                  FROM widget_event_executions x
                  INNER JOIN widget_fairies f ON f.id = x.fairy_id
                  INNER JOIN widget_applications a ON a.id = f.application_id
-                 WHERE x.id = ? AND a.widget_token = ? AND a.status = ?
+                 WHERE x.id = ? AND x.session_key = ? AND a.widget_token = ? AND a.status = ?
                  FOR UPDATE',
             );
-            $st->execute([$executionId, $token, 'approved']);
+            $st->execute([$executionId, $sessionKey, $token, 'approved']);
             $row = $st->fetch(PDO::FETCH_ASSOC);
             if (!$row) {
                 $pdo->rollBack();
@@ -176,6 +190,17 @@ final class WidgetController
         ];
     }
 
+    /** @param array<string, mixed> $b */
+    private function parseSessionKey(array $b): ?string
+    {
+        $s = trim((string) ($b['session_key'] ?? ''));
+        if ($s === '' || !preg_match('/^[a-zA-Z0-9_-]{16,64}$/', $s)) {
+            return null;
+        }
+
+        return $s;
+    }
+
     private function firstFairyIdForLog(PDO $pdo, int $appId): int
     {
         $st = $pdo->prepare(
@@ -187,7 +212,7 @@ final class WidgetController
         return $id !== false ? (int) $id : 0;
     }
 
-    private function beginEventForApplication(int $appId, string $eventKey): Response
+    private function beginEventForApplication(int $appId, string $eventKey, string $sessionKey): Response
     {
         $pdo = $this->db->pdo();
         $logFairy = $this->firstFairyIdForLog($pdo, $appId);
@@ -239,7 +264,7 @@ final class WidgetController
             return Response::json(['error' => 'conflict', 'reason' => self::REASON_NOT_ASSIGNED], 409);
         }
 
-        $lockName = 'wevt_' . $widgetEventId;
+        $lockName = 'wevt_' . $widgetEventId . '_' . md5($sessionKey);
         $execId = 0;
         try {
             $pdo->beginTransaction();
@@ -253,21 +278,14 @@ final class WidgetController
                 $this->closeStaleOpenExecutionsForWidgetEvent($pdo, $widgetEventId);
                 $ost = $pdo->prepare(
                     'SELECT id, fairy_id FROM widget_event_executions
-                     WHERE widget_event_id = ? AND completed_at IS NULL LIMIT 1 FOR UPDATE',
+                     WHERE widget_event_id = ? AND session_key = ? AND completed_at IS NULL LIMIT 1 FOR UPDATE',
                 );
-                $ost->execute([$widgetEventId]);
+                $ost->execute([$widgetEventId, $sessionKey]);
                 $other = $ost->fetch(PDO::FETCH_ASSOC);
                 if ($other) {
                     $otherFairyId = (int) $other['fairy_id'];
                     $bk = $this->blockerEventKey($pdo, (int) $other['id']);
-                    $logFairyId = (int) $fairyIds[0];
-                    foreach ($fairyIds as $fidRaw) {
-                        $cand = (int) $fidRaw;
-                        if ($cand !== $otherFairyId) {
-                            $logFairyId = $cand;
-                            break;
-                        }
-                    }
+                    $logFairyId = $otherFairyId;
                     $pdo->query('SELECT RELEASE_LOCK(' . $pdo->quote($lockName) . ')');
                     $pdo->commit();
                     $this->insertFailure(
@@ -277,7 +295,7 @@ final class WidgetController
                         $widgetEventId,
                         $eventKey,
                         self::REASON_EVENT_LOCKED,
-                        'Это событие уже выполняется (другая фея)',
+                        'Это событие уже выполняется в этой сессии браузера (вкладка)',
                         [
                             'blocker_execution_id' => (int) $other['id'],
                             'blocker_fairy_id' => $otherFairyId,
@@ -303,8 +321,8 @@ final class WidgetController
                         continue;
                     }
                     $pdo->prepare(
-                        'INSERT INTO widget_event_executions (fairy_id, widget_event_id, kind) VALUES (?,?,?)',
-                    )->execute([$fairyId, $widgetEventId, 'event']);
+                        'INSERT INTO widget_event_executions (fairy_id, widget_event_id, kind, session_key) VALUES (?,?,?,?)',
+                    )->execute([$fairyId, $widgetEventId, 'event', $sessionKey]);
                     $execId = (int) $pdo->lastInsertId();
                     $pdo->prepare(
                         'UPDATE widget_fairies SET current_execution_id = ? WHERE id = ?',
@@ -496,6 +514,21 @@ final class WidgetController
 (function(){
   var API = "{$api}";
   var TOKEN = "{$tok}";
+  var SESSION_KEY = (function(){
+    try {
+      var k = sessionStorage.getItem("_mlf_sk");
+      if (k && k.length >= 16) return k;
+      var buf = new Uint8Array(16);
+      if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(buf);
+      else for (var i = 0; i < 16; i++) buf[i] = Math.floor(Math.random() * 256);
+      var hex = "";
+      for (var j = 0; j < 16; j++) hex += ("0" + buf[j].toString(16)).slice(-2);
+      sessionStorage.setItem("_mlf_sk", hex);
+      return hex;
+    } catch (e) {
+      return "fb_" + String(Date.now()) + "_" + String(Math.random()).slice(2, 14);
+    }
+  })();
   var AUTO_STANDARD_WELCOME = {$stdJs};
   var STANDARD_EVENT_KEY = "_standard";
   var WAIT_BEFORE_FLY_MS = 10000;
@@ -525,7 +558,7 @@ final class WidgetController
   function beaconComplete(id){
     if (!id) return;
     var url = API + "/api/widget/event-complete";
-    var body = JSON.stringify({ token: TOKEN, execution_id: id });
+    var body = JSON.stringify({ token: TOKEN, execution_id: id, session_key: SESSION_KEY });
     try {
       if (navigator.sendBeacon) {
         var blob = new Blob([body], { type: "application/json" });
@@ -592,7 +625,11 @@ final class WidgetController
   }
   function completeExecution(executionId){
     forgetPendingExecution(executionId);
-    postJson("/api/widget/event-complete", { token: TOKEN, execution_id: executionId }).catch(function(){});
+    postJson("/api/widget/event-complete", {
+      token: TOKEN,
+      execution_id: executionId,
+      session_key: SESSION_KEY
+    }).catch(function(){});
   }
   function runFairySequence(phrase, spriteOk, introMs, executionId){
     introMs = introMs || 0;
@@ -720,7 +757,7 @@ final class WidgetController
       console.error("myLittleFairyWidget.show: передайте ключ события (строка), см. кабинет");
       return;
     }
-    beginAndPlay({ token: TOKEN, event_key: key }, function(){
+    beginAndPlay({ token: TOKEN, event_key: key, session_key: SESSION_KEY }, function(){
       console.warn("myLittleFairyWidget: событие не выполнено (фея занята, событие у другой феи и т.д.) — см. кабинет");
     });
   }
@@ -728,12 +765,12 @@ final class WidgetController
   function boot(){
     track();
     if (window.myLittleFairyWidget) return;
-    window.myLittleFairyWidget = { show: show, version: "5" };
+    window.myLittleFairyWidget = { show: show, version: "6" };
     if (AUTO_STANDARD_WELCOME) {
       preloadImage(SPRITE_URL, function(){
         autoTimer = setTimeout(function(){
           autoTimer = null;
-          beginAndPlay({ token: TOKEN, event_key: STANDARD_EVENT_KEY }, function(){});
+          beginAndPlay({ token: TOKEN, event_key: STANDARD_EVENT_KEY, session_key: SESSION_KEY }, function(){});
         }, WAIT_BEFORE_FLY_MS);
       });
     }

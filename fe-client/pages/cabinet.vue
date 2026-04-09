@@ -224,7 +224,7 @@ function statusLabel(s: string) {
 function reasonLabel(code: string) {
   const m: Record<string, string> = {
     fairy_busy: "фея была занята другим показом",
-    event_locked_other_fairy: "то же событие уже выполняла другая фея",
+    event_locked_other_fairy: "в этой сессии браузера это событие уже выполняется (или вкладка дублирует вызов)",
     event_not_assigned: "событие не назначено этой фее",
     event_not_found: "событие с таким ключом не найдено",
     standard_not_enabled: "стандартное поведение выключено",
