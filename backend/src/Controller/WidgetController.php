@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controller;
 
+use App\EventLandPosition;
 use App\Database;
 use App\Http\Request;
 use App\Http\Response;
@@ -218,7 +219,8 @@ final class WidgetController
             return Response::json(['error' => 'not_found'], 404);
         }
         $st = $pdo->prepare(
-            'SELECT id, phrase FROM widget_events WHERE application_id = ? AND event_key = ? LIMIT 1',
+            'SELECT id, phrase, pos_h_edge, pos_v_edge, pos_unit, pos_x, pos_y
+             FROM widget_events WHERE application_id = ? AND event_key = ? LIMIT 1',
         );
         $st->execute([$appId, $eventKey]);
         $ev = $st->fetch(PDO::FETCH_ASSOC);
@@ -238,6 +240,7 @@ final class WidgetController
         }
         $widgetEventId = (int) $ev['id'];
         $phrase = (string) $ev['phrase'];
+        $landPosition = EventLandPosition::fromDbRow($ev);
         $cst = $pdo->prepare(
             'SELECT f.id FROM widget_fairies f
              INNER JOIN fairy_events fe ON fe.fairy_id = f.id AND fe.widget_event_id = ?
@@ -335,6 +338,7 @@ final class WidgetController
                     return Response::json([
                         'execution_id' => $execId,
                         'phrase' => $phrase,
+                        'position' => $landPosition,
                     ]);
                 }
                 $pdo->query('SELECT RELEASE_LOCK(' . $pdo->quote($lockName) . ')');
@@ -599,13 +603,27 @@ final class WidgetController
       y: vh - WIDGET_H - FLY_FROM_BOTTOM
     };
   }
-  function flyToXY(){
+  function resolveLandXY(pos){
     var vw = window.innerWidth;
     var vh = window.innerHeight;
-    return {
-      x: vw - FLY_TO_RIGHT_INSET - WIDGET_W,
-      y: vh - WIDGET_H - FLY_TO_BOTTOM
-    };
+    pos = pos || {};
+    var h = pos.horizontal === "left" ? "left" : "right";
+    var v = pos.vertical === "top" ? "top" : "bottom";
+    var unit = pos.unit === "percent" ? "percent" : "px";
+    var ox = Number(pos.x);
+    var oy = Number(pos.y);
+    if (!isFinite(ox)) ox = FLY_TO_RIGHT_INSET;
+    if (!isFinite(oy)) oy = FLY_TO_BOTTOM;
+    function toPx(val, dim){
+      if (unit === "percent") return dim * val / 100;
+      return val;
+    }
+    var x, y;
+    if (h === "left") x = toPx(ox, vw);
+    else x = vw - WIDGET_W - toPx(ox, vw);
+    if (v === "top") y = toPx(oy, vh);
+    else y = vh - WIDGET_H - toPx(oy, vh);
+    return { x: x, y: y };
   }
   function preloadImage(url, onDone){
     var img = new Image();
@@ -635,7 +653,7 @@ final class WidgetController
       session_key: SESSION_KEY
     }).catch(function(){});
   }
-  function runFairySequence(phrase, spriteOk, introMs, executionId){
+  function runFairySequence(phrase, spriteOk, introMs, executionId, landPos){
     introMs = introMs || 0;
     if (!spriteOk) console.warn("widget: sprite failed to load", SPRITE_URL);
     var host = document.createElement("div");
@@ -713,7 +731,7 @@ final class WidgetController
 
     setHostXY(pStart.x, pStart.y, false);
     setTimeout(function(){
-      var pEnd = flyToXY();
+      var pEnd = resolveLandXY(landPos);
       setHostXY(pEnd.x, pEnd.y, true);
       setTimeout(function(){
         showBubble();
@@ -744,10 +762,11 @@ final class WidgetController
         if (!data) return;
         var eid = data.execution_id;
         var text = String(data.phrase || "");
+        var landPos = data.position || null;
         if (!eid || !text) throw new Error();
         rememberPendingExecution(eid);
         preloadImage(SPRITE_URL, function(ok){
-          runFairySequence(text, ok, 0, eid);
+          runFairySequence(text, ok, 0, eid, landPos);
         });
       })
       .catch(function(){
@@ -769,7 +788,7 @@ final class WidgetController
   function boot(){
     track();
     if (window.myLittleFairyWidget) return;
-    window.myLittleFairyWidget = { show: show, version: "7" };
+    window.myLittleFairyWidget = { show: show, version: "8" };
     if (AUTO_STANDARD_WELCOME) {
       preloadImage(SPRITE_URL, function(){
         autoTimer = setTimeout(function(){

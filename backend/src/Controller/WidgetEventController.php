@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controller;
 
+use App\EventLandPosition;
 use App\Database;
 use App\Http\Request;
 use App\Http\Response;
@@ -28,13 +29,17 @@ final class WidgetEventController
         }
         $this->ensureStandardWelcomeEvent($appId);
         $st = $this->db->pdo()->prepare(
-            'SELECT id, event_key, phrase, created_at, updated_at FROM widget_events
+            'SELECT id, event_key, phrase, pos_h_edge, pos_v_edge, pos_unit, pos_x, pos_y,
+                    created_at, updated_at
+             FROM widget_events
              WHERE application_id = ? ORDER BY id ASC',
         );
         $st->execute([$appId]);
         $rows = $st->fetchAll(PDO::FETCH_ASSOC);
         foreach ($rows as &$r) {
             $r['id'] = (int) $r['id'];
+            $r['position'] = EventLandPosition::fromDbRow($r);
+            unset($r['pos_h_edge'], $r['pos_v_edge'], $r['pos_unit'], $r['pos_x'], $r['pos_y']);
         }
         unset($r);
         return Response::json(['events' => $rows]);
@@ -65,11 +70,66 @@ final class WidgetEventController
         if (mb_strlen($phrase) > 2000) {
             return Response::json(['error' => 'validation', 'message' => 'phrase слишком длинный'], 422);
         }
+        $positionInput = null;
+        if (array_key_exists('position', $b)) {
+            if (!is_array($b['position'])) {
+                return Response::json(['error' => 'validation', 'message' => 'position: объект'], 422);
+            }
+            $positionInput = EventLandPosition::parse($b['position']);
+            if ($positionInput === null) {
+                return Response::json(
+                    [
+                        'error' => 'validation',
+                        'message' => 'position: horizontal left|right, vertical top|bottom, unit px|percent, x и y ≥ 0 (до 100 для %)',
+                    ],
+                    422,
+                );
+            }
+        }
         $pdo = $this->db->pdo();
-        $pdo->prepare(
-            'INSERT INTO widget_events (application_id, event_key, phrase) VALUES (?,?,?)
-             ON DUPLICATE KEY UPDATE phrase = VALUES(phrase), updated_at = CURRENT_TIMESTAMP',
-        )->execute([$appId, $eventKey, $phrase]);
+        $existSt = $pdo->prepare(
+            'SELECT id FROM widget_events WHERE application_id = ? AND event_key = ? LIMIT 1',
+        );
+        $existSt->execute([$appId, $eventKey]);
+        $existingId = $existSt->fetchColumn();
+        if ($existingId !== false) {
+            if ($positionInput !== null) {
+                $dbPos = EventLandPosition::toDbParams($positionInput);
+                $pdo->prepare(
+                    'UPDATE widget_events SET phrase = ?, pos_h_edge = ?, pos_v_edge = ?, pos_unit = ?, pos_x = ?, pos_y = ?,
+                     updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                )->execute([
+                    $phrase,
+                    $dbPos['pos_h_edge'],
+                    $dbPos['pos_v_edge'],
+                    $dbPos['pos_unit'],
+                    $dbPos['pos_x'],
+                    $dbPos['pos_y'],
+                    (int) $existingId,
+                ]);
+            } else {
+                $pdo->prepare(
+                    'UPDATE widget_events SET phrase = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                )->execute([$phrase, (int) $existingId]);
+            }
+        } else {
+            $pos = $positionInput ?? EventLandPosition::defaults();
+            $dbPos = EventLandPosition::toDbParams($pos);
+            $pdo->prepare(
+                'INSERT INTO widget_events (
+                    application_id, event_key, phrase, pos_h_edge, pos_v_edge, pos_unit, pos_x, pos_y
+                 ) VALUES (?,?,?,?,?,?,?,?)',
+            )->execute([
+                $appId,
+                $eventKey,
+                $phrase,
+                $dbPos['pos_h_edge'],
+                $dbPos['pos_v_edge'],
+                $dbPos['pos_unit'],
+                $dbPos['pos_x'],
+                $dbPos['pos_y'],
+            ]);
+        }
         $id = (int) $pdo->lastInsertId();
         if ($id === 0) {
             $st = $pdo->prepare(

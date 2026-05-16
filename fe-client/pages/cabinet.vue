@@ -91,13 +91,67 @@
             <p class="muted small">Несколько событий с разными ключами; повтор ключа обновляет текст. Новое событие по умолчанию назначается всем феям этой заявки.</p>
             <ul v-if="a.events?.length" class="evlist">
               <li v-for="e in a.events" :key="e.id">
-                <code>{{ e.event_key }}</code> — {{ e.phrase }}
+                <button type="button" class="ev-edit" @click="fillEventForm(a.id, e)">
+                  <code>{{ e.event_key }}</code> — {{ e.phrase }}
+                  <span class="ev-pos">{{ formatEventPosition(e.position) }}</span>
+                </button>
               </li>
             </ul>
             <p v-else class="muted small">Пока нет событий</p>
             <form class="evform" @submit.prevent="addEvent(a)">
               <input v-model="eventForms[a.id].key" placeholder="ключ, напр. promo" pattern="[a-zA-Z0-9_-]{1,64}" required />
               <textarea v-model="eventForms[a.id].phrase" placeholder="Текст для феи" rows="2" required />
+              <fieldset class="pos-fieldset">
+                <legend class="muted small">Позиция приземления для показа текста</legend>
+                <div class="pos-row">
+                  <label class="pos-label">
+                    По горизонтали
+                    <span class="pos-inline">
+                      <input
+                        v-model.number="eventForms[a.id].position.x"
+                        type="number"
+                        min="0"
+                        :max="eventForms[a.id].position.unit === 'percent' ? 100 : 10000"
+                        step="any"
+                        required
+                      />
+                      <select v-model="eventForms[a.id].position.unit">
+                        <option value="px">px</option>
+                        <option value="percent">%</option>
+                      </select>
+                      от
+                      <select v-model="eventForms[a.id].position.horizontal">
+                        <option value="left">левого</option>
+                        <option value="right">правого</option>
+                      </select>
+                      края
+                    </span>
+                  </label>
+                  <label class="pos-label">
+                    По вертикали
+                    <span class="pos-inline">
+                      <input
+                        v-model.number="eventForms[a.id].position.y"
+                        type="number"
+                        min="0"
+                        :max="eventForms[a.id].position.unit === 'percent' ? 100 : 10000"
+                        step="any"
+                        required
+                      />
+                      <select v-model="eventForms[a.id].position.unit">
+                        <option value="px">px</option>
+                        <option value="percent">%</option>
+                      </select>
+                      от
+                      <select v-model="eventForms[a.id].position.vertical">
+                        <option value="top">верхнего</option>
+                        <option value="bottom">нижнего</option>
+                      </select>
+                      края
+                    </span>
+                  </label>
+                </div>
+              </fieldset>
               <button type="submit" class="btn primary sm" :disabled="eventPending[a.id]">Добавить / обновить</button>
             </form>
           </div>
@@ -132,10 +186,25 @@ definePageMeta({
   middleware: "auth",
 });
 
+type EventLandPosition = {
+  horizontal: "left" | "right";
+  vertical: "top" | "bottom";
+  unit: "px" | "percent";
+  x: number;
+  y: number;
+};
+
 type WidgetEventRow = {
   id: number;
   event_key: string;
   phrase: string;
+  position?: EventLandPosition;
+};
+
+type EventFormState = {
+  key: string;
+  phrase: string;
+  position: EventLandPosition;
 };
 
 type FairyRow = {
@@ -176,7 +245,11 @@ const siteUrl = ref("");
 const loadError = ref("");
 const createError = ref("");
 const createPending = ref(false);
-const eventForms = ref<Record<number, { key: string; phrase: string }>>({});
+const eventForms = ref<Record<number, EventFormState>>({});
+
+function defaultEventPosition(): EventLandPosition {
+  return { horizontal: "right", vertical: "bottom", unit: "px", x: 150, y: 130 };
+}
 const eventPending = ref<Record<number, boolean>>({});
 const assignPending = ref<Record<number, boolean>>({});
 const fairyCreatePending = ref<Record<number, boolean>>({});
@@ -184,7 +257,27 @@ const eventSelection = ref<Record<number, number[]>>({});
 const failureRows = ref<Record<number, FailureRow[]>>({});
 
 function ensureEventForm(id: number) {
-  if (!eventForms.value[id]) eventForms.value[id] = { key: "", phrase: "" };
+  if (!eventForms.value[id]) {
+    eventForms.value[id] = { key: "", phrase: "", position: defaultEventPosition() };
+  }
+}
+
+function fillEventForm(appId: number, e: WidgetEventRow) {
+  ensureEventForm(appId);
+  const pos = e.position ?? defaultEventPosition();
+  eventForms.value[appId] = {
+    key: e.event_key,
+    phrase: e.phrase,
+    position: { ...pos },
+  };
+}
+
+function formatEventPosition(pos?: EventLandPosition) {
+  const p = pos ?? defaultEventPosition();
+  const unit = p.unit === "percent" ? "%" : "px";
+  const h = p.horizontal === "left" ? "слева" : "справа";
+  const v = p.vertical === "top" ? "сверху" : "снизу";
+  return `(${p.x}${unit} ${h}, ${p.y}${unit} ${v})`;
 }
 
 function ensureSelection(fairyId: number, ids: number[]) {
@@ -336,10 +429,15 @@ async function addEvent(a: AppRow) {
   try {
     await api(`/api/applications/${a.id}/events`, {
       method: "POST",
-      body: JSON.stringify({ event_key: f.key.trim(), phrase: f.phrase.trim() }),
+      body: JSON.stringify({
+        event_key: f.key.trim(),
+        phrase: f.phrase.trim(),
+        position: { ...f.position },
+      }),
     });
     f.key = "";
     f.phrase = "";
+    f.position = defaultEventPosition();
     await load();
   } catch {
     /* handled by api */
@@ -519,6 +617,71 @@ input {
 .evlist li {
   margin-bottom: 6px;
   word-break: break-word;
+}
+.ev-edit {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.ev-edit:hover {
+  background: #2a2e36;
+}
+.ev-pos {
+  display: block;
+  font-size: 0.78rem;
+  color: #9aa0a6;
+  margin-top: 2px;
+}
+.pos-fieldset {
+  flex: 1 1 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #2e3238;
+  border-radius: 8px;
+}
+.pos-fieldset legend {
+  padding: 0 4px;
+}
+.pos-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pos-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: #bdc1c6;
+}
+.pos-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.pos-inline input[type="number"] {
+  width: 72px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid #3c4043;
+  background: #0f1115;
+  color: #e8eaed;
+}
+.pos-inline select {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid #3c4043;
+  background: #0f1115;
+  color: #e8eaed;
 }
 .evform {
   display: flex;
