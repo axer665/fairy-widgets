@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controller;
 
+use App\EventAction;
 use App\EventLandPosition;
 use App\Database;
 use App\Http\Request;
@@ -95,7 +96,83 @@ final class WidgetController
             );
         }
 
-        return $this->beginEventForApplication($appId, $eventKey, $sessionKey);
+        return $this->beginEventForApplication($appId, $eventKey, $sessionKey, $token);
+    }
+
+    public function surveyRate(Request $request): Response
+    {
+        $b = $request->body;
+        if (!is_array($b)) {
+            return Response::json(['error' => 'invalid_json'], 400);
+        }
+        $token = trim((string) ($b['token'] ?? ''));
+        $executionId = isset($b['execution_id']) ? (int) $b['execution_id'] : 0;
+        $rating = isset($b['rating']) ? (int) $b['rating'] : 0;
+        if ($token === '' || $executionId < 1 || $rating < 1 || $rating > 5) {
+            return Response::json(['error' => 'validation'], 422);
+        }
+        $sessionKey = $this->parseSessionKey($b);
+        if ($sessionKey === null) {
+            return Response::json(['error' => 'validation'], 422);
+        }
+        $appRow = $this->resolveApplicationForEmbed($request, $token);
+        if ($appRow === null) {
+            return Response::json(['error' => 'forbidden'], 403);
+        }
+        $appId = (int) $appRow['application_id'];
+        $pageUrl = trim((string) ($b['page_url'] ?? ''));
+        if (mb_strlen($pageUrl) > 2048) {
+            $pageUrl = mb_substr($pageUrl, 0, 2048);
+        }
+        $pdo = $this->db->pdo();
+        $st = $pdo->prepare(
+            'SELECT x.id, x.widget_event_id, x.completed_at, we.action_type_id
+             FROM widget_event_executions x
+             INNER JOIN widget_fairies f ON f.id = x.fairy_id
+             INNER JOIN widget_events we ON we.id = x.widget_event_id
+             WHERE x.id = ? AND x.session_key = ? AND f.application_id = ? LIMIT 1',
+        );
+        $st->execute([$executionId, $sessionKey, $appId]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$row || (int) $row['action_type_id'] !== EventAction::TYPE_ID_SURVEY) {
+            return Response::json(['error' => 'not_found'], 404);
+        }
+        if ($row['completed_at'] !== null) {
+            return Response::json(['ok' => true]);
+        }
+        $widgetEventId = (int) $row['widget_event_id'];
+        $pdo->prepare(
+            'INSERT INTO widget_survey_ratings (application_id, widget_event_id, execution_id, session_key, rating, page_url)
+             VALUES (?,?,?,?,?,?)
+             ON DUPLICATE KEY UPDATE rating = VALUES(rating), page_url = VALUES(page_url)',
+        )->execute([$appId, $widgetEventId, $executionId, $sessionKey, $rating, $pageUrl !== '' ? $pageUrl : null]);
+        $this->completeExecutionById($pdo, $executionId, $sessionKey, $token);
+
+        return Response::json(['ok' => true]);
+    }
+
+    public function videoDismiss(Request $request): Response
+    {
+        $b = $request->body;
+        if (!is_array($b)) {
+            return Response::json(['error' => 'invalid_json'], 400);
+        }
+        $token = trim((string) ($b['token'] ?? ''));
+        $executionId = isset($b['execution_id']) ? (int) $b['execution_id'] : 0;
+        if ($token === '' || $executionId < 1) {
+            return Response::json(['error' => 'validation'], 422);
+        }
+        $sessionKey = $this->parseSessionKey($b);
+        if ($sessionKey === null) {
+            return Response::json(['error' => 'validation'], 422);
+        }
+        if ($this->resolveApplicationForEmbed($request, $token) === null) {
+            return Response::json(['error' => 'forbidden'], 403);
+        }
+        $pdo = $this->db->pdo();
+        $this->completeExecutionById($pdo, $executionId, $sessionKey, $token);
+
+        return Response::json(['ok' => true]);
     }
 
     public function eventComplete(Request $request): Response
@@ -211,7 +288,7 @@ final class WidgetController
         return $id !== false ? (int) $id : 0;
     }
 
-    private function beginEventForApplication(int $appId, string $eventKey, string $sessionKey): Response
+    private function beginEventForApplication(int $appId, string $eventKey, string $sessionKey, string $widgetToken): Response
     {
         $pdo = $this->db->pdo();
         $logFairy = $this->firstFairyIdForLog($pdo, $appId);
@@ -219,8 +296,12 @@ final class WidgetController
             return Response::json(['error' => 'not_found'], 404);
         }
         $st = $pdo->prepare(
-            'SELECT id, phrase, pos_h_edge, pos_v_edge, pos_unit, pos_x, pos_y
-             FROM widget_events WHERE application_id = ? AND event_key = ? LIMIT 1',
+            'SELECT we.id, we.phrase, we.action_type_id, we.survey_title, we.video_media_id, we.video_link_url,
+                    we.pos_h_edge, we.pos_v_edge, we.pos_unit, we.pos_x, we.pos_y,
+                    wat.code AS action_type_code, wat.label AS action_type_label
+             FROM widget_events we
+             INNER JOIN widget_action_types wat ON wat.id = we.action_type_id
+             WHERE we.application_id = ? AND we.event_key = ? LIMIT 1',
         );
         $st->execute([$appId, $eventKey]);
         $ev = $st->fetch(PDO::FETCH_ASSOC);
@@ -239,8 +320,13 @@ final class WidgetController
             return Response::json(['error' => 'conflict', 'reason' => self::REASON_NOT_FOUND], 409);
         }
         $widgetEventId = (int) $ev['id'];
-        $phrase = (string) $ev['phrase'];
         $landPosition = EventLandPosition::fromDbRow($ev);
+        $videoUrl = null;
+        $mediaId = isset($ev['video_media_id']) ? (int) $ev['video_media_id'] : 0;
+        if ($mediaId > 0 && EventAction::typeCodeFromRow($ev) === EventAction::TYPE_VIDEO) {
+            $videoUrl = $this->widgetMediaPlayUrl($mediaId, $widgetToken);
+        }
+        $action = EventAction::toWidgetPayload($ev, $videoUrl);
         $cst = $pdo->prepare(
             'SELECT f.id FROM widget_fairies f
              INNER JOIN fairy_events fe ON fe.fairy_id = f.id AND fe.widget_event_id = ?
@@ -337,8 +423,9 @@ final class WidgetController
 
                     return Response::json([
                         'execution_id' => $execId,
-                        'phrase' => $phrase,
+                        'phrase' => (string) $ev['phrase'],
                         'position' => $landPosition,
+                        'action' => $action,
                     ]);
                 }
                 $pdo->query('SELECT RELEASE_LOCK(' . $pdo->quote($lockName) . ')');
@@ -510,296 +597,62 @@ final class WidgetController
         )->execute([$fairyId]);
     }
 
+    private function widgetMediaPlayUrl(int $mediaId, string $widgetToken): string
+    {
+        return rtrim($this->appUrl, '/') . '/widget/media/' . $mediaId . '?token=' . rawurlencode($widgetToken);
+    }
+
+    private function completeExecutionById(PDO $pdo, int $executionId, string $sessionKey, string $token): void
+    {
+        try {
+            $pdo->beginTransaction();
+            $st = $pdo->prepare(
+                'SELECT x.id AS ex_id, x.fairy_id, x.completed_at
+                 FROM widget_event_executions x
+                 INNER JOIN widget_fairies f ON f.id = x.fairy_id
+                 INNER JOIN widget_applications a ON a.id = f.application_id
+                 WHERE x.id = ? AND x.session_key = ? AND a.widget_token = ? AND a.status = ?
+                 FOR UPDATE',
+            );
+            $st->execute([$executionId, $sessionKey, $token, 'approved']);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$row || $row['completed_at'] !== null) {
+                $pdo->rollBack();
+
+                return;
+            }
+            $fairyId = (int) $row['fairy_id'];
+            $pdo->prepare(
+                'UPDATE widget_event_executions SET completed_at = CURRENT_TIMESTAMP WHERE id = ?',
+            )->execute([$executionId]);
+            $pdo->prepare(
+                'UPDATE widget_fairies SET current_execution_id = NULL WHERE id = ? AND current_execution_id = ?',
+            )->execute([$fairyId, $executionId]);
+            $pdo->commit();
+        } catch (PDOException) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+        }
+    }
+
     private function buildWidgetJs(
         string $apiBase,
         string $widgetToken,
         bool $autoStandardWelcome,
     ): string {
-        $api = addslashes($apiBase);
-        $tok = addslashes($widgetToken);
-        $stdJs = $autoStandardWelcome ? 'true' : 'false';
-        return <<<JS
-(function(){
-  var API = "{$api}";
-  var TOKEN = "{$tok}";
-  var SESSION_KEY = (function(){
-    try {
-      var k = sessionStorage.getItem("_mlf_sk");
-      if (k && k.length >= 16) return k;
-      var buf = new Uint8Array(16);
-      if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(buf);
-      else for (var i = 0; i < 16; i++) buf[i] = Math.floor(Math.random() * 256);
-      var hex = "";
-      for (var j = 0; j < 16; j++) hex += ("0" + buf[j].toString(16)).slice(-2);
-      sessionStorage.setItem("_mlf_sk", hex);
-      return hex;
-    } catch (e) {
-      return "fb_" + String(Date.now()) + "_" + String(Math.random()).slice(2, 14);
-    }
-  })();
-  var AUTO_STANDARD_WELCOME = {$stdJs};
-  var STANDARD_EVENT_KEY = "_standard";
-  var WAIT_BEFORE_FLY_MS = 10000;
-  var SPRITE_URL = API + "/widget/fairy-sprite.png";
-  var FRAME_W = 128;
-  var FRAME_H = 106;
-  var FRAME_COUNT = 8;
-  var SPRITE_W = 1024;
-  var SPRITE_H = 106;
-  var WIDGET_W = 180;
-  var WIDGET_H = 170;
-  var FLY_FROM_RIGHT_OVERFLOW = 320;
-  var FLY_FROM_BOTTOM = 0;
-  var FLY_TO_RIGHT_INSET = 150;
-  var FLY_TO_BOTTOM = 130;
-  var FLY_MS = 900;
-  var MESSAGE_DELAY_MS = 5000;
-  var REMOVE_DELAY_MS = 5000;
-  var autoTimer = null;
-  var pendingExecutions = {};
-  function rememberPendingExecution(id){
-    if (id) pendingExecutions[id] = true;
-  }
-  function forgetPendingExecution(id){
-    delete pendingExecutions[id];
-  }
-  function beaconComplete(id){
-    if (!id) return;
-    var url = API + "/api/widget/event-complete";
-    var body = JSON.stringify({ token: TOKEN, execution_id: id, session_key: SESSION_KEY });
-    try {
-      if (navigator.sendBeacon) {
-        var blob = new Blob([body], { type: "application/json" });
-        navigator.sendBeacon(url, blob);
-      } else {
-        fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: body, keepalive: true });
-      }
-    } catch (e) {}
-  }
-  window.addEventListener("pagehide", function(){
-    try {
-      for (var k in pendingExecutions) {
-        if (!Object.prototype.hasOwnProperty.call(pendingExecutions, k)) continue;
-        var n = parseInt(k, 10);
-        if (n) beaconComplete(n);
-      }
-      pendingExecutions = {};
-    } catch (e) {}
-  });
-  function pageUrl(){ try { return location.href.split("#")[0]; } catch(e){ return ""; } }
-  function track(){
-    var url = pageUrl();
-    fetch(API + "/api/track", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: TOKEN, page_url: url })
-    }).catch(function(){});
-  }
-  function flyFromXY(){
-    var vw = window.innerWidth;
-    var vh = window.innerHeight;
-    return {
-      x: vw + FLY_FROM_RIGHT_OVERFLOW - WIDGET_W,
-      y: vh - WIDGET_H - FLY_FROM_BOTTOM
-    };
-  }
-  function resolveLandXY(pos){
-    var vw = window.innerWidth;
-    var vh = window.innerHeight;
-    pos = pos || {};
-    var h = pos.horizontal === "left" ? "left" : "right";
-    var v = pos.vertical === "top" ? "top" : "bottom";
-    var unit = pos.unit === "percent" ? "percent" : "px";
-    var ox = Number(pos.x);
-    var oy = Number(pos.y);
-    if (!isFinite(ox)) ox = FLY_TO_RIGHT_INSET;
-    if (!isFinite(oy)) oy = FLY_TO_BOTTOM;
-    function toPx(val, dim){
-      if (unit === "percent") return dim * val / 100;
-      return val;
-    }
-    var x, y;
-    if (h === "left") x = toPx(ox, vw);
-    else x = vw - WIDGET_W - toPx(ox, vw);
-    if (v === "top") y = toPx(oy, vh);
-    else y = vh - WIDGET_H - toPx(oy, vh);
-    return { x: x, y: y };
-  }
-  function preloadImage(url, onDone){
-    var img = new Image();
-    var done = false;
-    function finish(ok){
-      if (done) return;
-      done = true;
-      onDone(ok);
-    }
-    img.onload = function(){ finish(true); };
-    img.onerror = function(){ finish(false); };
-    img.src = url;
-    if (img.complete && img.naturalWidth > 0) finish(true);
-  }
-  function postJson(path, body){
-    return fetch(API + path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-  }
-  function completeExecution(executionId){
-    forgetPendingExecution(executionId);
-    postJson("/api/widget/event-complete", {
-      token: TOKEN,
-      execution_id: executionId,
-      session_key: SESSION_KEY
-    }).catch(function(){});
-  }
-  function runFairySequence(phrase, spriteOk, introMs, executionId, landPos){
-    introMs = introMs || 0;
-    if (!spriteOk) console.warn("widget: sprite failed to load", SPRITE_URL);
-    var host = document.createElement("div");
-    host.setAttribute("data-widget", "ok");
-    var pStart = flyFromXY();
-    host.style.cssText =
-      "position:fixed;right:auto;bottom:auto;" +
-      "z-index:2147483647;width:" + WIDGET_W + "px;height:" + WIDGET_H + "px;pointer-events:none;opacity:1;" +
-      "transition:none;will-change:left,top;";
-
-    var fairy = document.createElement("div");
-    var fairyBg =
-      "background-color:transparent;background-image:url('" + SPRITE_URL + "');background-repeat:no-repeat;" +
-      "background-size:" + SPRITE_W + "px " + SPRITE_H + "px;background-position:0 0;";
-    var fairyFallback =
-      "background:#6b3a82 linear-gradient(180deg,#9b6fb8,#4a2d5c);border-radius:12px;";
-    fairy.style.cssText =
-      "position:absolute;right:16px;bottom:0;width:" + FRAME_W + "px;height:" + FRAME_H + "px;" +
-      "transform:scaleX(1);transform-origin:50% 100%;" +
-      (spriteOk ? fairyBg : fairyFallback);
-
-    var bubble = document.createElement("div");
-    bubble.textContent = phrase;
-    bubble.style.cssText =
-      "position:absolute;right:30px;bottom:108px;max-width:200px;padding:8px 10px;" +
-      "background:#ffffff;color:#111;border-radius:10px;font:13px/1.35 system-ui,sans-serif;" +
-      "box-shadow:0 8px 24px rgba(0,0,0,.2);opacity:0;transform:translateY(4px);" +
-      "transition:opacity .25s ease,transform .25s ease;word-wrap:break-word;";
-
-    host.appendChild(fairy);
-    host.appendChild(bubble);
-    document.body.appendChild(host);
-
-    var frame = 0;
-    var spriteTimer = null;
-    if (spriteOk) {
-      spriteTimer = setInterval(function(){
-        frame = (frame + 1) % FRAME_COUNT;
-        fairy.style.backgroundPosition = (-frame * FRAME_W) + "px 0";
-      }, 85);
-    }
-
-    function setHostXY(x, y, animate){
-      if (animate) {
-        host.style.transition = "left " + FLY_MS + "ms ease-in-out, top " + FLY_MS + "ms ease-in-out";
-        requestAnimationFrame(function(){
-          requestAnimationFrame(function(){
-            host.style.left = x + "px";
-            host.style.top = y + "px";
-          });
-        });
-      } else {
-        host.style.transition = "none";
-        host.style.left = x + "px";
-        host.style.top = y + "px";
-        void host.offsetWidth;
-      }
-    }
-
-    function showBubble(){
-      bubble.style.opacity = "1";
-      bubble.style.transform = "translateY(0)";
-    }
-
-    function hideBubble(){
-      bubble.style.opacity = "0";
-      bubble.style.transform = "translateY(4px)";
-    }
-
-    function destroy(){
-      if (spriteTimer) clearInterval(spriteTimer);
-      try { host.remove(); } catch(e){}
-      completeExecution(executionId);
-    }
-
-    setHostXY(pStart.x, pStart.y, false);
-    setTimeout(function(){
-      var pEnd = resolveLandXY(landPos);
-      setHostXY(pEnd.x, pEnd.y, true);
-      setTimeout(function(){
-        showBubble();
-        setTimeout(function(){
-          hideBubble();
-          fairy.style.transform = "scaleX(-1)";
-          var pBack = flyFromXY();
-          setHostXY(pBack.x, pBack.y, true);
-          setTimeout(function(){
-            setTimeout(destroy, REMOVE_DELAY_MS);
-          }, FLY_MS);
-        }, MESSAGE_DELAY_MS);
-      }, FLY_MS);
-    }, introMs);
-  }
-
-  function beginAndPlay(body, onFail){
-    postJson("/api/widget/event-begin", body)
-      .then(function(r){
-        if (r.status === 409) {
-          if (onFail) onFail();
-          return null;
+        $path = dirname(__DIR__) . '/resources/widget-runtime.js';
+        if (!is_readable($path)) {
+            return 'console.error("widget: runtime missing");';
         }
-        if (!r.ok) throw new Error();
-        return r.json();
-      })
-      .then(function(data){
-        if (!data) return;
-        var eid = data.execution_id;
-        var text = String(data.phrase || "");
-        var landPos = data.position || null;
-        if (!eid || !text) throw new Error();
-        rememberPendingExecution(eid);
-        preloadImage(SPRITE_URL, function(ok){
-          runFairySequence(text, ok, 0, eid, landPos);
-        });
-      })
-      .catch(function(){
-        if (onFail) onFail();
-      });
-  }
+        $js = (string) file_get_contents($path);
+        $replacements = [
+            '{{API}}' => addslashes($apiBase),
+            '{{TOKEN}}' => addslashes($widgetToken),
+            '{{AUTO_STANDARD}}' => $autoStandardWelcome ? 'true' : 'false',
+            '{{VERSION}}' => '9',
+        ];
 
-  function show(eventKey){
-    var key = String(eventKey || "").trim();
-    if (!key) {
-      console.error("myLittleFairyWidget.show: передайте ключ события (строка), см. кабинет");
-      return;
-    }
-    beginAndPlay({ token: TOKEN, event_key: key, session_key: SESSION_KEY }, function(){
-      console.warn("myLittleFairyWidget: событие не выполнено (фея занята, событие у другой феи и т.д.) — см. кабинет");
-    });
-  }
-
-  function boot(){
-    track();
-    if (window.myLittleFairyWidget) return;
-    window.myLittleFairyWidget = { show: show, version: "8" };
-    if (AUTO_STANDARD_WELCOME) {
-      preloadImage(SPRITE_URL, function(){
-        autoTimer = setTimeout(function(){
-          autoTimer = null;
-          beginAndPlay({ token: TOKEN, event_key: STANDARD_EVENT_KEY, session_key: SESSION_KEY }, function(){});
-        }, WAIT_BEFORE_FLY_MS);
-      });
-    }
-  }
-  boot();
-})();
-JS;
+        return str_replace(array_keys($replacements), array_values($replacements), $js);
     }
 }

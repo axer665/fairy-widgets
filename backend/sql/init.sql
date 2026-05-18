@@ -41,11 +41,40 @@ CREATE TABLE widget_views (
   INDEX idx_app_created (application_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE widget_action_types (
+  id TINYINT UNSIGNED PRIMARY KEY,
+  code VARCHAR(32) NOT NULL UNIQUE,
+  label VARCHAR(128) NOT NULL,
+  sort_order TINYINT UNSIGNED NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO widget_action_types (id, code, label, sort_order) VALUES
+  (1, 'text', 'Текст', 1),
+  (2, 'survey', 'Опрос удовлетворённости', 2),
+  (3, 'video', 'Видео', 3);
+
+CREATE TABLE widget_media_assets (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  application_id INT UNSIGNED NOT NULL,
+  original_filename VARCHAR(255) NOT NULL,
+  stored_filename VARCHAR(128) NOT NULL,
+  mime_type VARCHAR(64) NOT NULL,
+  size_bytes INT UNSIGNED NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (application_id) REFERENCES widget_applications(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_app_stored (application_id, stored_filename),
+  INDEX idx_app (application_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE widget_events (
   id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   application_id INT UNSIGNED NOT NULL,
   event_key VARCHAR(64) NOT NULL,
   phrase VARCHAR(2000) NOT NULL,
+  action_type_id TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  survey_title VARCHAR(512) NULL,
+  video_media_id INT UNSIGNED NULL,
+  video_link_url VARCHAR(2048) NULL,
   pos_h_edge ENUM('left', 'right') NOT NULL DEFAULT 'right',
   pos_v_edge ENUM('top', 'bottom') NOT NULL DEFAULT 'bottom',
   pos_unit ENUM('px', 'percent') NOT NULL DEFAULT 'px',
@@ -54,8 +83,27 @@ CREATE TABLE widget_events (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (application_id) REFERENCES widget_applications(id) ON DELETE CASCADE,
+  FOREIGN KEY (action_type_id) REFERENCES widget_action_types(id),
+  FOREIGN KEY (video_media_id) REFERENCES widget_media_assets(id) ON DELETE SET NULL,
   UNIQUE KEY uq_app_event_key (application_id, event_key),
   INDEX idx_app (application_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE widget_survey_ratings (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  application_id INT UNSIGNED NOT NULL,
+  widget_event_id INT UNSIGNED NOT NULL,
+  execution_id BIGINT UNSIGNED NOT NULL,
+  session_key VARCHAR(64) NOT NULL,
+  rating TINYINT UNSIGNED NOT NULL,
+  page_url VARCHAR(2048) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (application_id) REFERENCES widget_applications(id) ON DELETE CASCADE,
+  FOREIGN KEY (widget_event_id) REFERENCES widget_events(id) ON DELETE CASCADE,
+  FOREIGN KEY (execution_id) REFERENCES widget_event_executions(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_execution_rating (execution_id),
+  INDEX idx_app_event_created (application_id, widget_event_id, created_at),
+  CONSTRAINT chk_survey_rating CHECK (rating BETWEEN 1 AND 5)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE fairy_events (

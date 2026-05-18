@@ -11,6 +11,8 @@ use App\Controller\ModeratorController;
 use App\Controller\TrackController;
 use App\Controller\WidgetController;
 use App\Controller\WidgetEventController;
+use App\Controller\WidgetMediaController;
+use App\MediaStorage;
 use App\Http\Request;
 use App\Http\Response;
 use App\Middleware\AuthMiddleware;
@@ -46,6 +48,8 @@ final class Application
         $modCtrl = new ModeratorController($this->db);
         $widgetCtrl = new WidgetController($this->db, $appUrl);
         $widgetEventCtrl = new WidgetEventController($this->db);
+        $mediaStorage = new MediaStorage(dirname(__DIR__) . '/storage/media');
+        $mediaCtrl = new WidgetMediaController($this->db, $mediaStorage, $appUrl);
         $trackCtrl = new TrackController($this->db);
 
         $corsWidget = new CorsWidgetPublicMiddleware();
@@ -99,6 +103,31 @@ final class Application
             $widgetEventCtrl->delete(...),
             [$json, $auth, $log],
         );
+        $this->router->add('GET', '/api/action-types', $widgetEventCtrl->listActionTypes(...), [$json, $auth, $log]);
+        $this->router->add(
+            'GET',
+            '/api/applications/{id}/media',
+            $mediaCtrl->list(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'POST',
+            '/api/applications/{id}/media',
+            $mediaCtrl->upload(...),
+            [$auth, $log],
+        );
+        $this->router->add(
+            'DELETE',
+            '/api/applications/{id}/media/{mediaId}',
+            $mediaCtrl->delete(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'GET',
+            '/api/applications/{id}/media/{mediaId}/file',
+            $mediaCtrl->serveForCabinet(...),
+            [$auth, $log],
+        );
 
         $this->router->add('GET', '/api/mod/applications', $modCtrl->list(...), [$json, $modAuth, $log]);
         $this->router->add(
@@ -147,5 +176,18 @@ final class Application
             $widgetCtrl->eventComplete(...),
             [$corsWidget, $json, $log],
         );
+        $this->router->add(
+            ['POST', 'OPTIONS'],
+            '/api/widget/survey-rate',
+            $widgetCtrl->surveyRate(...),
+            [$corsWidget, $json, $log],
+        );
+        $this->router->add(
+            ['POST', 'OPTIONS'],
+            '/api/widget/video-dismiss',
+            $widgetCtrl->videoDismiss(...),
+            [$corsWidget, $json, $log],
+        );
+        $this->router->add('GET', '/widget/media/{mediaId}', $mediaCtrl->serveForWidget(...), [$corsWidget, $log]);
     }
 }

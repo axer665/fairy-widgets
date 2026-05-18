@@ -50,6 +50,17 @@
               type="button"
               role="tab"
               class="app-tab"
+              :class="{ active: appTab(a.id) === 'content' }"
+              :aria-selected="appTab(a.id) === 'content'"
+              @click="onContentTab(a.id)"
+            >
+              Контент
+              <span v-if="mediaRows[a.id]?.length" class="tab-count">{{ mediaRows[a.id].length }}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              class="app-tab"
               :class="{ active: appTab(a.id) === 'failures' }"
               :aria-selected="appTab(a.id) === 'failures'"
               @click="onFailuresTab(a.id)"
@@ -91,7 +102,8 @@
                       @change="toggleEvent(f.id, e.id, $event)"
                     />
                     <code>{{ e.event_key }}</code>
-                    <span class="phrase-preview">{{ e.phrase }}</span>
+                    <span class="ev-type-badge">{{ e.action_type_label || "Текст" }}</span>
+                    <span class="phrase-preview">{{ eventPreviewText(e) }}</span>
                   </label>
                 </li>
               </ul>
@@ -131,7 +143,8 @@
               <li v-for="e in a.events" :key="e.id" class="ev-card" :class="{ editing: editingEventId(a.id) === e.id }">
                 <div class="ev-card-main">
                   <code>{{ e.event_key }}</code>
-                  <p class="ev-phrase">{{ e.phrase }}</p>
+                  <span class="ev-type-badge">{{ e.action_type_label || "Текст" }}</span>
+                  <p class="ev-phrase">{{ eventPreviewText(e) }}</p>
                   <span class="ev-pos">{{ formatEventPosition(e.position) }}</span>
                 </div>
                 <div class="ev-card-actions">
@@ -155,6 +168,12 @@
                 Редактирование: <code>{{ eventForms[a.id].key }}</code>
               </p>
               <p v-else class="ev-form-hint muted small">Новое событие</p>
+              <label class="ev-field">
+                Тип действия
+                <select v-model="eventForms[a.id].action_type" :disabled="eventForms[a.id].key === '_standard'">
+                  <option v-for="t in actionTypes" :key="t.code" :value="t.code">{{ t.label }}</option>
+                </select>
+              </label>
               <input
                 v-model="eventForms[a.id].key"
                 placeholder="ключ, напр. promo"
@@ -162,9 +181,42 @@
                 :readonly="!!editingEventId(a.id)"
                 required
               />
-              <textarea v-model="eventForms[a.id].phrase" placeholder="Текст для феи" rows="2" required />
+              <textarea
+                v-if="eventForms[a.id].action_type === 'text' || eventForms[a.id].key === '_standard'"
+                v-model="eventForms[a.id].phrase"
+                placeholder="Текст для феи"
+                rows="2"
+                required
+              />
+              <input
+                v-if="eventForms[a.id].action_type === 'survey'"
+                v-model="eventForms[a.id].survey_title"
+                type="text"
+                placeholder="Заголовок опроса"
+                maxlength="512"
+                required
+              />
+              <template v-if="eventForms[a.id].action_type === 'video'">
+                <label class="ev-field">
+                  Видео из контента
+                  <select v-model.number="eventForms[a.id].video_media_id" required>
+                    <option :value="0" disabled>Выберите файл</option>
+                    <option v-for="m in mediaRows[a.id] || []" :key="m.id" :value="m.id">
+                      {{ m.original_filename }} ({{ formatBytes(m.size_bytes) }})
+                    </option>
+                  </select>
+                </label>
+                <p v-if="!(mediaRows[a.id]?.length)" class="muted small">
+                  Сначала загрузите видео во вкладке «Контент» (до 10 МБ).
+                </p>
+                <input
+                  v-model="eventForms[a.id].video_link_url"
+                  type="url"
+                  placeholder="Ссылка по кнопке «Подробнее» (необязательно)"
+                />
+              </template>
               <fieldset class="pos-fieldset">
-                <legend class="muted small">Позиция приземления для показа текста</legend>
+                <legend class="muted small">Позиция приземления феи</legend>
                 <div class="pos-row">
                   <label class="pos-label">
                     По горизонтали
@@ -230,6 +282,41 @@
             </form>
           </div>
 
+          <div v-show="appTab(a.id) === 'content'" class="tab-panel" role="tabpanel">
+            <h3 class="panel-title">Контент</h3>
+            <p class="muted small">Загрузите видео (MP4, WebM или MOV, не более 10 МБ), затем привяжите к событию типа «Видео».</p>
+            <form class="upload-form panel-block" @submit.prevent="uploadMedia(a)">
+              <input
+                type="file"
+                accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
+                @change="onFilePick(a.id, $event)"
+              />
+              <button type="submit" class="btn primary sm" :disabled="mediaUploadPending[a.id] || !mediaFilePick[a.id]">
+                Загрузить
+              </button>
+            </form>
+            <ul v-if="mediaRows[a.id]?.length" class="media-list">
+              <li v-for="m in mediaRows[a.id]" :key="m.id" class="media-item">
+                <div class="media-meta">
+                  <strong>{{ m.original_filename }}</strong>
+                  <span class="muted small">{{ formatBytes(m.size_bytes) }}</span>
+                </div>
+                <div class="media-actions">
+                  <a :href="m.play_url" class="btn sm secondary" target="_blank" rel="noopener">Просмотр</a>
+                  <button
+                    type="button"
+                    class="btn sm danger"
+                    :disabled="mediaDeletePending[m.id]"
+                    @click="deleteMedia(a, m)"
+                  >
+                    Удалить
+                  </button>
+                </div>
+              </li>
+            </ul>
+            <p v-else class="muted small">Пока нет загруженных файлов</p>
+          </div>
+
           <div v-show="appTab(a.id) === 'failures'" class="tab-panel" role="tabpanel">
             <div class="panel-head">
               <h3 class="panel-title">Журнал сбоев выполнения</h3>
@@ -258,6 +345,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
+import { useStore } from "vuex";
 
 definePageMeta({
   middleware: "auth",
@@ -271,16 +359,38 @@ type EventLandPosition = {
   y: number;
 };
 
+type ActionTypeCode = "text" | "survey" | "video";
+
+type ActionTypeRow = { code: ActionTypeCode; label: string };
+
+type MediaRow = {
+  id: number;
+  original_filename: string;
+  mime_type: string;
+  size_bytes: number;
+  created_at: string;
+  play_url: string;
+};
+
 type WidgetEventRow = {
   id: number;
   event_key: string;
   phrase: string;
+  action_type: ActionTypeCode;
+  action_type_label?: string;
+  survey_title?: string | null;
+  video_media_id?: number | null;
+  video_link_url?: string | null;
   position?: EventLandPosition;
 };
 
 type EventFormState = {
   key: string;
+  action_type: ActionTypeCode;
   phrase: string;
+  survey_title: string;
+  video_media_id: number;
+  video_link_url: string;
   position: EventLandPosition;
 };
 
@@ -300,7 +410,7 @@ type AppRow = {
   events?: WidgetEventRow[];
 };
 
-type AppTabId = "fairies" | "events" | "failures";
+type AppTabId = "fairies" | "events" | "content" | "failures";
 
 type FailureRow = {
   id: number;
@@ -317,7 +427,13 @@ type FailureRow = {
   created_at: string;
 };
 
-const { api } = useApi();
+const { api, base } = useApi();
+
+const actionTypes = ref<ActionTypeRow[]>([
+  { code: "text", label: "Текст" },
+  { code: "survey", label: "Опрос удовлетворённости" },
+  { code: "video", label: "Видео" },
+]);
 
 const apps = ref<AppRow[]>([]);
 const siteUrl = ref("");
@@ -337,6 +453,10 @@ const failureRows = ref<Record<number, FailureRow[]>>({});
 const appTabs = ref<Record<number, AppTabId>>({});
 const editingEventIds = ref<Record<number, number | null>>({});
 const eventDeletePending = ref<Record<number, boolean>>({});
+const mediaRows = ref<Record<number, MediaRow[]>>({});
+const mediaUploadPending = ref<Record<number, boolean>>({});
+const mediaDeletePending = ref<Record<number, boolean>>({});
+const mediaFilePick = ref<Record<number, File | null>>({});
 
 function appTab(appId: number): AppTabId {
   return appTabs.value[appId] ?? "fairies";
@@ -351,13 +471,51 @@ function onFailuresTab(appId: number) {
   void loadFailures(appId);
 }
 
+function onContentTab(appId: number) {
+  setAppTab(appId, "content");
+  void loadMedia(appId);
+}
+
+function defaultEventForm(): EventFormState {
+  return {
+    key: "",
+    action_type: "text",
+    phrase: "",
+    survey_title: "",
+    video_media_id: 0,
+    video_link_url: "",
+    position: defaultEventPosition(),
+  };
+}
+
+function eventPreviewText(e: WidgetEventRow): string {
+  if (e.action_type === "survey") return e.survey_title || e.phrase;
+  if (e.action_type === "video") {
+    const id = e.video_media_id ? " #" + String(e.video_media_id) : "";
+    return "Видео" + id + (e.video_link_url ? " + ссылка" : "");
+  }
+  return e.phrase;
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function onFilePick(appId: number, ev: Event) {
+  const input = ev.target as HTMLInputElement;
+  const file = input.files?.[0] ?? null;
+  mediaFilePick.value[appId] = file;
+}
+
 function editingEventId(appId: number): number | null {
   return editingEventIds.value[appId] ?? null;
 }
 
 function ensureEventForm(id: number) {
   if (!eventForms.value[id]) {
-    eventForms.value[id] = { key: "", phrase: "", position: defaultEventPosition() };
+    eventForms.value[id] = defaultEventForm();
   }
 }
 
@@ -366,7 +524,11 @@ function fillEventForm(appId: number, e: WidgetEventRow) {
   const pos = e.position ?? defaultEventPosition();
   eventForms.value[appId] = {
     key: e.event_key,
+    action_type: e.action_type || "text",
     phrase: e.phrase,
+    survey_title: e.survey_title || "",
+    video_media_id: e.video_media_id || 0,
+    video_link_url: e.video_link_url || "",
     position: { ...pos },
   };
   editingEventIds.value[appId] = e.id;
@@ -375,7 +537,7 @@ function fillEventForm(appId: number, e: WidgetEventRow) {
 
 function clearEventForm(appId: number) {
   ensureEventForm(appId);
-  eventForms.value[appId] = { key: "", phrase: "", position: defaultEventPosition() };
+  eventForms.value[appId] = defaultEventForm();
   editingEventIds.value[appId] = null;
 }
 
@@ -447,6 +609,53 @@ function formatFailTime(iso: string) {
   }
 }
 
+async function loadMedia(appId: number) {
+  try {
+    const res = await api<{ media: MediaRow[] }>(`/api/applications/${appId}/media`, { method: "GET" });
+    mediaRows.value[appId] = res.media;
+  } catch {
+    mediaRows.value[appId] = [];
+  }
+}
+
+async function uploadMedia(a: AppRow) {
+  const file = mediaFilePick.value[a.id];
+  if (!file) return;
+  if (file.size > 10 * 1024 * 1024) {
+    alert("Файл больше 10 МБ");
+    return;
+  }
+  mediaUploadPending.value[a.id] = true;
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const token = useStore().state.token as string | null;
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    await $fetch(`${base}/api/applications/${a.id}/media`, { method: "POST", body: fd, headers });
+    mediaFilePick.value[a.id] = null;
+    await loadMedia(a.id);
+  } catch {
+    /* */
+  } finally {
+    mediaUploadPending.value[a.id] = false;
+  }
+}
+
+async function deleteMedia(a: AppRow, m: MediaRow) {
+  if (!confirm(`Удалить «${m.original_filename}»?`)) return;
+  mediaDeletePending.value[m.id] = true;
+  try {
+    await api(`/api/applications/${a.id}/media/${m.id}`, { method: "DELETE" });
+    await loadMedia(a.id);
+    await load();
+  } catch {
+    /* */
+  } finally {
+    mediaDeletePending.value[m.id] = false;
+  }
+}
+
 async function loadFailures(appId: number) {
   try {
     const res = await api<{ failures: FailureRow[] }>(`/api/applications/${appId}/event-failures?limit=50`, {
@@ -477,9 +686,16 @@ async function load() {
         a.events = [];
       }
       await loadFailures(a.id);
+      await loadMedia(a.id);
     }
   } catch {
     loadError.value = "Не удалось загрузить заявки";
+  }
+  try {
+    const types = await api<{ action_types: ActionTypeRow[] }>("/api/action-types", { method: "GET" });
+    if (types.action_types?.length) actionTypes.value = types.action_types;
+  } catch {
+    /* defaults */
   }
 }
 
@@ -531,16 +747,29 @@ async function addFairy(a: AppRow) {
 async function addEvent(a: AppRow) {
   ensureEventForm(a.id);
   const f = eventForms.value[a.id];
-  if (!f.key.trim() || !f.phrase.trim()) return;
+  if (!f.key.trim()) return;
+  if (f.action_type === "text" && !f.phrase.trim()) return;
+  if (f.action_type === "survey" && !f.survey_title.trim()) return;
+  if (f.action_type === "video" && f.video_media_id < 1) return;
   eventPending.value[a.id] = true;
   try {
+    const body: Record<string, unknown> = {
+      event_key: f.key.trim(),
+      action_type: f.key.trim() === "_standard" ? "text" : f.action_type,
+      position: { ...f.position },
+    };
+    if (body.action_type === "text") body.phrase = f.phrase.trim();
+    if (body.action_type === "survey") {
+      body.survey_title = f.survey_title.trim();
+      if (f.phrase.trim()) body.phrase = f.phrase.trim();
+    }
+    if (body.action_type === "video") {
+      body.video_media_id = f.video_media_id;
+      if (f.video_link_url.trim()) body.video_link_url = f.video_link_url.trim();
+    }
     await api(`/api/applications/${a.id}/events`, {
       method: "POST",
-      body: JSON.stringify({
-        event_key: f.key.trim(),
-        phrase: f.phrase.trim(),
-        position: { ...f.position },
-      }),
+      body: JSON.stringify(body),
     });
     clearEventForm(a.id);
     await load();
@@ -791,6 +1020,65 @@ input {
   font-size: inherit;
   cursor: pointer;
   text-decoration: underline;
+}
+.ev-type-badge {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #2a3a4a;
+  color: #8ab4f8;
+  vertical-align: middle;
+}
+.ev-field {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.88rem;
+  color: #bdc1c6;
+}
+.ev-field select {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #3c4043;
+  background: #0f1115;
+  color: #e8eaed;
+}
+.upload-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.upload-form input[type="file"] {
+  flex: 1 1 200px;
+  font-size: 0.85rem;
+  color: #bdc1c6;
+}
+.media-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.media-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid #2a2d33;
+}
+.media-meta strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.media-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 .fairy-block {
   margin-top: 12px;
