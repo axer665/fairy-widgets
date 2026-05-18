@@ -377,25 +377,7 @@
 
           <div v-show="appTab(a.id) === 'video'" class="tab-panel" role="tabpanel">
             <h3 class="panel-title">Видео-виджеты</h3>
-            <p class="muted small">Загрузите файл (MP4, WebM, MOV, до 10 МБ), затем создайте виджет.</p>
-            <form class="upload-form panel-block" @submit.prevent="uploadMedia(a)">
-              <input
-                type="file"
-                accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
-                @change="onFilePick(a.id, $event)"
-              />
-              <button type="submit" class="btn primary sm" :disabled="mediaUploadPending[a.id] || !mediaFilePick[a.id]">
-                Загрузить файл
-              </button>
-            </form>
-            <ul v-if="mediaRows[a.id]?.length" class="media-list compact">
-              <li v-for="m in mediaRows[a.id]" :key="m.id" class="media-item">
-                <span>{{ m.original_filename }} ({{ formatBytes(m.size_bytes) }})</span>
-                <button type="button" class="btn sm danger" :disabled="mediaDeletePending[m.id]" @click="deleteMedia(a, m)">
-                  Удалить файл
-                </button>
-              </li>
-            </ul>
+            <p class="muted small">MP4, WebM или MOV, не более 10 МБ. Видео загружается при создании виджета.</p>
             <ul v-if="videoWidgets[a.id]?.length" class="widget-list">
               <li
                 v-for="w in videoWidgets[a.id]"
@@ -435,14 +417,33 @@
                 </template>
               </li>
             </ul>
-            <form class="panel-block evform" @submit.prevent="saveVideoWidget(a)">
+            <p v-else class="muted small">Пока нет видео-виджетов</p>
+            <form
+              :key="'video-create-' + a.id + '-' + (videoFormResetKey[a.id] ?? 0)"
+              class="panel-block evform"
+              @submit.prevent="saveVideoWidget(a)"
+            >
               <input v-model="videoForms[a.id].name" placeholder="Название виджета" maxlength="128" required />
-              <select v-model.number="videoForms[a.id].media_id" required>
-                <option :value="0" disabled>Выберите файл</option>
-                <option v-for="m in mediaRows[a.id] || []" :key="m.id" :value="m.id">{{ m.original_filename }}</option>
-              </select>
+              <label class="ev-field file-field">
+                Видеофайл
+                <input
+                  type="file"
+                  accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov"
+                  required
+                  @change="onVideoCreateFilePick(a.id, $event)"
+                />
+              </label>
+              <p v-if="videoCreateFile[a.id]" class="muted small">
+                {{ videoCreateFile[a.id]!.name }} ({{ formatBytes(videoCreateFile[a.id]!.size) }})
+              </p>
               <input v-model="videoForms[a.id].link_url" type="url" placeholder="Ссылка «Подробнее» (необязательно)" />
-              <button type="submit" class="btn primary sm" :disabled="videoPending[a.id]">Добавить виджет</button>
+              <button
+                type="submit"
+                class="btn primary sm"
+                :disabled="videoPending[a.id] || !videoCreateFile[a.id]"
+              >
+                Создать виджет
+              </button>
             </form>
           </div>
 
@@ -490,15 +491,6 @@ type EventLandPosition = {
 type ActionTypeCode = "text" | "survey" | "video";
 
 type ActionTypeRow = { code: ActionTypeCode; label: string };
-
-type MediaRow = {
-  id: number;
-  original_filename: string;
-  mime_type: string;
-  size_bytes: number;
-  created_at: string;
-  play_url: string;
-};
 
 type TextWidgetRow = {
   id: number;
@@ -614,16 +606,14 @@ const failureRows = ref<Record<number, FailureRow[]>>({});
 const appTabs = ref<Record<number, AppTabId>>({});
 const editingEventIds = ref<Record<number, number | null>>({});
 const eventDeletePending = ref<Record<number, boolean>>({});
-const mediaRows = ref<Record<number, MediaRow[]>>({});
-const mediaUploadPending = ref<Record<number, boolean>>({});
-const mediaDeletePending = ref<Record<number, boolean>>({});
-const mediaFilePick = ref<Record<number, File | null>>({});
 const textWidgets = ref<Record<number, TextWidgetRow[]>>({});
 const surveyWidgets = ref<Record<number, SurveyWidgetRow[]>>({});
 const videoWidgets = ref<Record<number, VideoWidgetRow[]>>({});
 const textForms = ref<Record<number, { name: string; body: string }>>({});
 const surveyForms = ref<Record<number, { name: string; title: string; description: string }>>({});
-const videoForms = ref<Record<number, { name: string; media_id: number; link_url: string }>>({});
+const videoForms = ref<Record<number, { name: string; link_url: string }>>({});
+const videoCreateFile = ref<Record<number, File | null>>({});
+const videoFormResetKey = ref<Record<number, number>>({});
 const textPending = ref<Record<number, boolean>>({});
 const surveyPending = ref<Record<number, boolean>>({});
 const videoPending = ref<Record<number, boolean>>({});
@@ -662,7 +652,6 @@ function onSurveyTab(appId: number) {
 
 function onVideoTab(appId: number) {
   setAppTab(appId, "video");
-  void loadMedia(appId);
   void loadVideoWidgets(appId);
 }
 
@@ -684,7 +673,7 @@ function defaultSurveyForm() {
 }
 
 function defaultVideoForm() {
-  return { name: "", media_id: 0, link_url: "" };
+  return { name: "", link_url: "" };
 }
 
 function ensureWidgetForms(appId: number) {
@@ -728,10 +717,9 @@ function formatBytes(n: number): string {
   return (n / (1024 * 1024)).toFixed(1) + " MB";
 }
 
-function onFilePick(appId: number, ev: Event) {
+function onVideoCreateFilePick(appId: number, ev: Event) {
   const input = ev.target as HTMLInputElement;
-  const file = input.files?.[0] ?? null;
-  mediaFilePick.value[appId] = file;
+  videoCreateFile.value[appId] = input.files?.[0] ?? null;
 }
 
 function editingEventId(appId: number): number | null {
@@ -1011,18 +999,31 @@ async function saveSurveyWidget(a: AppRow) {
 async function saveVideoWidget(a: AppRow) {
   ensureWidgetForms(a.id);
   const f = videoForms.value[a.id];
-  if (!f.name.trim() || f.media_id < 1) return;
+  const file = videoCreateFile.value[a.id];
+  if (!f.name.trim() || !file) return;
+  if (file.size > 10 * 1024 * 1024) {
+    alert("Файл больше 10 МБ");
+    return;
+  }
   videoPending.value[a.id] = true;
   try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const uploaded = await api<{ id: number }>(`/api/applications/${a.id}/media`, {
+      method: "POST",
+      body: fd,
+    });
     await api(`/api/applications/${a.id}/video-widgets`, {
       method: "POST",
       body: JSON.stringify({
         name: f.name.trim(),
-        media_id: f.media_id,
+        media_id: uploaded.id,
         link_url: f.link_url.trim() || undefined,
       }),
     });
     videoForms.value[a.id] = defaultVideoForm();
+    videoCreateFile.value[a.id] = null;
+    videoFormResetKey.value[a.id] = (videoFormResetKey.value[a.id] ?? 0) + 1;
     await loadVideoWidgets(a.id);
   } catch {
     /* */
@@ -1061,51 +1062,6 @@ async function deleteVideoWidget(a: AppRow, w: VideoWidgetRow) {
   }
 }
 
-async function loadMedia(appId: number) {
-  try {
-    const res = await api<{ media: MediaRow[] }>(`/api/applications/${appId}/media`, { method: "GET" });
-    mediaRows.value[appId] = res.media;
-  } catch {
-    mediaRows.value[appId] = [];
-  }
-}
-
-async function uploadMedia(a: AppRow) {
-  const file = mediaFilePick.value[a.id];
-  if (!file) return;
-  if (file.size > 10 * 1024 * 1024) {
-    alert("Файл больше 10 МБ");
-    return;
-  }
-  mediaUploadPending.value[a.id] = true;
-  try {
-    const fd = new FormData();
-    fd.append("file", file);
-    await api(`/api/applications/${a.id}/media`, { method: "POST", body: fd });
-    mediaFilePick.value[a.id] = null;
-    await loadMedia(a.id);
-    await loadVideoWidgets(a.id);
-  } catch {
-    /* */
-  } finally {
-    mediaUploadPending.value[a.id] = false;
-  }
-}
-
-async function deleteMedia(a: AppRow, m: MediaRow) {
-  if (!confirm(`Удалить «${m.original_filename}»?`)) return;
-  mediaDeletePending.value[m.id] = true;
-  try {
-    await api(`/api/applications/${a.id}/media/${m.id}`, { method: "DELETE" });
-    await loadMedia(a.id);
-    await load();
-  } catch {
-    /* */
-  } finally {
-    mediaDeletePending.value[m.id] = false;
-  }
-}
-
 async function loadFailures(appId: number) {
   try {
     const res = await api<{ failures: FailureRow[] }>(`/api/applications/${appId}/event-failures?limit=50`, {
@@ -1139,7 +1095,6 @@ async function load() {
       ensureWidgetForms(a.id);
       await loadTextWidgets(a.id);
       await loadSurveyWidgets(a.id);
-      await loadMedia(a.id);
       await loadVideoWidgets(a.id);
     }
   } catch {
