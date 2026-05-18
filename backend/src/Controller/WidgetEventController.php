@@ -146,11 +146,52 @@ final class WidgetEventController
         return Response::json(['ok' => true, 'id' => $id, 'event_key' => $eventKey], 201);
     }
 
+    public function delete(Request $request): Response
+    {
+        $appId = $this->appId($request);
+        if ($appId < 1) {
+            return Response::json(['error' => 'invalid_id'], 400);
+        }
+        $uid = (int) ($request->attributes['user_id'] ?? 0);
+        if (!$this->ownsApplication($appId, $uid)) {
+            return Response::json(['error' => 'forbidden'], 403);
+        }
+        $eventId = $this->eventId($request);
+        if ($eventId < 1) {
+            return Response::json(['error' => 'invalid_id'], 400);
+        }
+        $pdo = $this->db->pdo();
+        $st = $pdo->prepare(
+            'SELECT id, event_key FROM widget_events WHERE id = ? AND application_id = ? LIMIT 1',
+        );
+        $st->execute([$eventId, $appId]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            return Response::json(['error' => 'not_found'], 404);
+        }
+        if ((string) $row['event_key'] === '_standard') {
+            return Response::json(
+                ['error' => 'validation', 'message' => 'Системное событие _standard нельзя удалить'],
+                422,
+            );
+        }
+        $pdo->prepare('DELETE FROM widget_events WHERE id = ? AND application_id = ?')->execute([$eventId, $appId]);
+
+        return Response::json(['ok' => true]);
+    }
+
     private function appId(Request $request): int
     {
         $params = $request->attributes['route_params'] ?? [];
 
         return (int) ($params['id'] ?? 0);
+    }
+
+    private function eventId(Request $request): int
+    {
+        $params = $request->attributes['route_params'] ?? [];
+
+        return (int) ($params['eventId'] ?? 0);
     }
 
     /** Системное событие `_standard` + перенос legacy standard_behavior → fairy_events. */

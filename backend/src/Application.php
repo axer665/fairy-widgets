@@ -93,6 +93,12 @@ final class Application
             $widgetEventCtrl->create(...),
             [$json, $auth, $log],
         );
+        $this->router->add(
+            'DELETE',
+            '/api/applications/{id}/events/{eventId}',
+            $widgetEventCtrl->delete(...),
+            [$json, $auth, $log],
+        );
 
         $this->router->add('GET', '/api/mod/applications', $modCtrl->list(...), [$json, $modAuth, $log]);
         $this->router->add(

@@ -24,20 +24,53 @@
         <p v-if="a.moderator_note" class="note">Комментарий: {{ a.moderator_note }}</p>
 
         <template v-if="a.status === 'approved'">
+          <nav class="app-tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              class="app-tab"
+              :class="{ active: appTab(a.id) === 'fairies' }"
+              :aria-selected="appTab(a.id) === 'fairies'"
+              @click="setAppTab(a.id, 'fairies')"
+            >
+              Феи
+            </button>
+            <button
+              type="button"
+              role="tab"
+              class="app-tab"
+              :class="{ active: appTab(a.id) === 'events' }"
+              :aria-selected="appTab(a.id) === 'events'"
+              @click="setAppTab(a.id, 'events')"
+            >
+              События
+              <span v-if="a.events?.length" class="tab-count">{{ a.events.length }}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              class="app-tab"
+              :class="{ active: appTab(a.id) === 'failures' }"
+              :aria-selected="appTab(a.id) === 'failures'"
+              @click="onFailuresTab(a.id)"
+            >
+              Журнал сбоев
+              <span v-if="failureRows[a.id]?.length" class="tab-count warn">{{ failureRows[a.id].length }}</span>
+            </button>
+          </nav>
+
+          <div v-show="appTab(a.id) === 'fairies'" class="tab-panel" role="tabpanel">
           <p class="muted small help-top">
-            На сайт вставляется один скрипт с токеном заявки. Феи и события настраиваются только здесь; при вызове
-            <code>myLittleFairyWidget.show("ключ")</code> сервер сам выбирает фею, проверяет занятость и блокировку
-            события. Автоприветствие — это событие <code>_standard</code>: отредактируйте текст в блоке событий и
-            отметьте его у нужных фей; после загрузки страницы виджет сам вызовет его (как
-            <code>show("_standard")</code>).
+            На сайт вставляется один скрипт. При вызове <code>myLittleFairyWidget.show("ключ")</code> сервер выбирает
+            свободную фею с назначенным событием. Автоприветствие — событие <code>_standard</code> (вкладка «События»).
           </p>
 
-          <div v-if="a.embed_snippet" class="embed card-inner">
+          <div v-if="a.embed_snippet" class="embed panel-block">
             <p>Код для сайта:</p>
             <pre>{{ a.embed_snippet }}</pre>
           </div>
 
-          <div v-for="f in a.fairies" :key="f.id" class="fairy-block card-inner">
+          <div v-for="f in a.fairies" :key="f.id" class="fairy-block panel-block">
             <div class="fairy-head">
               <input
                 v-model="f.name"
@@ -71,7 +104,7 @@
                 Сохранить назначения
               </button>
             </div>
-            <p v-else class="muted small">Сначала добавьте события в блоке ниже — затем назначьте их феям.</p>
+            <p v-else class="muted small">Сначала добавьте события во вкладке «События», затем назначьте их феям.</p>
           </div>
 
           <button
@@ -84,22 +117,51 @@
             Добавить фею
           </button>
 
-          <div v-if="a.fairies.length === 0" class="muted small">Ожидайте одобрения модератором — появится первая фея.</div>
+          <p v-if="a.fairies.length === 0" class="muted small panel-block">
+            Ожидайте одобрения модератором — появится первая фея.
+          </p>
+          </div>
 
-          <div class="events card-inner">
-            <h3>События (ключи для <code>show("ключ")</code>)</h3>
-            <p class="muted small">Несколько событий с разными ключами; повтор ключа обновляет текст. Новое событие по умолчанию назначается всем феям этой заявки.</p>
-            <ul v-if="a.events?.length" class="evlist">
-              <li v-for="e in a.events" :key="e.id">
-                <button type="button" class="ev-edit" @click="fillEventForm(a.id, e)">
-                  <code>{{ e.event_key }}</code> — {{ e.phrase }}
+          <div v-show="appTab(a.id) === 'events'" class="tab-panel" role="tabpanel">
+            <h3 class="panel-title">События</h3>
+            <p class="muted small">
+              Ключи для <code>show("ключ")</code>. Новое событие по умолчанию назначается всем феям заявки.
+            </p>
+            <ul v-if="a.events?.length" class="evlist ev-cards">
+              <li v-for="e in a.events" :key="e.id" class="ev-card" :class="{ editing: editingEventId(a.id) === e.id }">
+                <div class="ev-card-main">
+                  <code>{{ e.event_key }}</code>
+                  <p class="ev-phrase">{{ e.phrase }}</p>
                   <span class="ev-pos">{{ formatEventPosition(e.position) }}</span>
-                </button>
+                </div>
+                <div class="ev-card-actions">
+                  <button type="button" class="btn sm secondary" @click="fillEventForm(a.id, e)">Изменить</button>
+                  <button
+                    v-if="e.event_key !== '_standard'"
+                    type="button"
+                    class="btn sm danger"
+                    :disabled="eventDeletePending[e.id]"
+                    @click="deleteEvent(a, e)"
+                  >
+                    Удалить
+                  </button>
+                  <span v-else class="muted small">системное</span>
+                </div>
               </li>
             </ul>
-            <p v-else class="muted small">Пока нет событий</p>
-            <form class="evform" @submit.prevent="addEvent(a)">
-              <input v-model="eventForms[a.id].key" placeholder="ключ, напр. promo" pattern="[a-zA-Z0-9_-]{1,64}" required />
+            <p v-else class="muted small">Пока нет событий — создайте первое ниже.</p>
+            <form class="evform panel-block" @submit.prevent="addEvent(a)">
+              <p v-if="editingEventId(a.id)" class="ev-form-hint">
+                Редактирование: <code>{{ eventForms[a.id].key }}</code>
+              </p>
+              <p v-else class="ev-form-hint muted small">Новое событие</p>
+              <input
+                v-model="eventForms[a.id].key"
+                placeholder="ключ, напр. promo"
+                pattern="[a-zA-Z0-9_-]{1,64}"
+                :readonly="!!editingEventId(a.id)"
+                required
+              />
               <textarea v-model="eventForms[a.id].phrase" placeholder="Текст для феи" rows="2" required />
               <fieldset class="pos-fieldset">
                 <legend class="muted small">Позиция приземления для показа текста</legend>
@@ -152,12 +214,27 @@
                   </label>
                 </div>
               </fieldset>
-              <button type="submit" class="btn primary sm" :disabled="eventPending[a.id]">Добавить / обновить</button>
+              <div class="evform-actions">
+                <button type="submit" class="btn primary sm" :disabled="eventPending[a.id]">
+                  {{ editingEventId(a.id) ? "Сохранить" : "Создать" }}
+                </button>
+                <button
+                  v-if="editingEventId(a.id)"
+                  type="button"
+                  class="btn sm secondary"
+                  @click="clearEventForm(a.id)"
+                >
+                  Отмена
+                </button>
+              </div>
             </form>
           </div>
 
-          <div class="failures card-inner">
-            <h3>Журнал сбоев выполнения</h3>
+          <div v-show="appTab(a.id) === 'failures'" class="tab-panel" role="tabpanel">
+            <div class="panel-head">
+              <h3 class="panel-title">Журнал сбоев выполнения</h3>
+              <button type="button" class="btn sm secondary" @click="loadFailures(a.id)">Обновить</button>
+            </div>
             <p v-if="!failureRows[a.id]?.length" class="muted small">Пока записей нет</p>
             <ul v-else class="fail-list">
               <li v-for="row in failureRows[a.id]" :key="row.id">
@@ -223,6 +300,8 @@ type AppRow = {
   events?: WidgetEventRow[];
 };
 
+type AppTabId = "fairies" | "events" | "failures";
+
 type FailureRow = {
   id: number;
   fairy_id: number;
@@ -255,6 +334,26 @@ const assignPending = ref<Record<number, boolean>>({});
 const fairyCreatePending = ref<Record<number, boolean>>({});
 const eventSelection = ref<Record<number, number[]>>({});
 const failureRows = ref<Record<number, FailureRow[]>>({});
+const appTabs = ref<Record<number, AppTabId>>({});
+const editingEventIds = ref<Record<number, number | null>>({});
+const eventDeletePending = ref<Record<number, boolean>>({});
+
+function appTab(appId: number): AppTabId {
+  return appTabs.value[appId] ?? "fairies";
+}
+
+function setAppTab(appId: number, tab: AppTabId) {
+  appTabs.value[appId] = tab;
+}
+
+function onFailuresTab(appId: number) {
+  setAppTab(appId, "failures");
+  void loadFailures(appId);
+}
+
+function editingEventId(appId: number): number | null {
+  return editingEventIds.value[appId] ?? null;
+}
 
 function ensureEventForm(id: number) {
   if (!eventForms.value[id]) {
@@ -270,6 +369,14 @@ function fillEventForm(appId: number, e: WidgetEventRow) {
     phrase: e.phrase,
     position: { ...pos },
   };
+  editingEventIds.value[appId] = e.id;
+  setAppTab(appId, "events");
+}
+
+function clearEventForm(appId: number) {
+  ensureEventForm(appId);
+  eventForms.value[appId] = { key: "", phrase: "", position: defaultEventPosition() };
+  editingEventIds.value[appId] = null;
 }
 
 function formatEventPosition(pos?: EventLandPosition) {
@@ -435,14 +542,28 @@ async function addEvent(a: AppRow) {
         position: { ...f.position },
       }),
     });
-    f.key = "";
-    f.phrase = "";
-    f.position = defaultEventPosition();
+    clearEventForm(a.id);
     await load();
   } catch {
     /* handled by api */
   } finally {
     eventPending.value[a.id] = false;
+  }
+}
+
+async function deleteEvent(a: AppRow, e: WidgetEventRow) {
+  if (e.event_key === "_standard") return;
+  const label = e.event_key === "_standard" ? "стандартное приветствие" : e.event_key;
+  if (!confirm(`Удалить событие «${label}»?`)) return;
+  eventDeletePending.value[e.id] = true;
+  try {
+    await api(`/api/applications/${a.id}/events/${e.id}`, { method: "DELETE" });
+    if (editingEventId(a.id) === e.id) clearEventForm(a.id);
+    await load();
+  } catch {
+    /* */
+  } finally {
+    eventDeletePending.value[e.id] = false;
   }
 }
 
@@ -536,6 +657,140 @@ input {
 }
 .help-top {
   margin: 0 0 12px;
+}
+.app-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 14px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid #2e3238;
+}
+.app-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid #3c4043;
+  background: #0f1115;
+  color: #bdc1c6;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.app-tab:hover {
+  background: #2a2e36;
+  color: #e8eaed;
+}
+.app-tab.active {
+  background: #1a3a5c;
+  border-color: #1a73e8;
+  color: #e8f0fe;
+}
+.tab-count {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #3c4043;
+  color: #e8eaed;
+}
+.tab-count.warn {
+  background: #5c2b2b;
+  color: #f28b82;
+}
+.tab-panel {
+  margin-top: 14px;
+}
+.panel-block {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #2e3238;
+}
+.panel-block:first-child {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+.panel-title {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+.panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.panel-head .panel-title {
+  margin: 0;
+}
+.ev-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ev-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid #2e3238;
+  background: #0f1115;
+}
+.ev-card.editing {
+  border-color: #1a73e8;
+}
+.ev-card-main {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.ev-phrase {
+  margin: 6px 0 4px;
+  font-size: 0.88rem;
+  color: #bdc1c6;
+  word-break: break-word;
+}
+.ev-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ev-form-hint {
+  flex: 1 1 100%;
+  margin: 0 0 4px;
+  font-size: 0.86rem;
+}
+.evform-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1 1 100%;
+}
+.btn.danger {
+  background: #5c2b2b;
+  color: #f8d7da;
+  border: 1px solid #8b3a3a;
+}
+.btn.danger:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.link-btn {
+  margin-left: 10px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #8ab4f8;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
 }
 .fairy-block {
   margin-top: 12px;
