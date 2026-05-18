@@ -211,6 +211,13 @@
     h.textContent = title;
     h.style.cssText = "margin:0 0 10px;font-weight:600;font-size:13px;";
     panel.appendChild(h);
+    var descText = String(action.survey_description || "");
+    if (descText) {
+      var desc = document.createElement("p");
+      desc.textContent = descText;
+      desc.style.cssText = "margin:0 0 10px;font-size:12px;color:#5f6368;";
+      panel.appendChild(desc);
+    }
     var stars = document.createElement("div");
     stars.style.cssText = "display:flex;gap:4px;";
     var rated = false;
@@ -253,6 +260,23 @@
       })(s);
     }
     panel.appendChild(stars);
+    var cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.textContent = "Отмена";
+    cancelBtn.style.cssText =
+      "display:block;width:100%;margin-top:10px;padding:6px 8px;border:1px solid #dadce0;border-radius:6px;" +
+      "background:transparent;color:#5f6368;font-size:12px;cursor:pointer;";
+    var cancelled = false;
+    function cancelSurvey(){
+      if (cancelled || rated) return;
+      cancelled = true;
+      postJson("/api/widget/survey-dismiss", {
+        token: TOKEN, execution_id: executionId, session_key: SESSION_KEY
+      }).catch(function(){});
+      ctx.flyAwayThen(executionId, null);
+    }
+    cancelBtn.onclick = cancelSurvey;
+    panel.appendChild(cancelBtn);
     ctx.host.appendChild(panel);
     ctx.host.style.pointerEvents = "auto";
     var pStart = flyFromXY();
@@ -292,6 +316,11 @@
       linkBtn.style.cssText =
         "flex:1;text-align:center;padding:6px 8px;background:#1a73e8;color:#fff;border-radius:6px;" +
         "text-decoration:none;font-size:12px;font-weight:600;";
+      linkBtn.addEventListener("click", function(){
+        postJson("/api/widget/video-link-click", {
+          token: TOKEN, execution_id: executionId, session_key: SESSION_KEY
+        }).catch(function(){});
+      });
       row.appendChild(linkBtn);
     }
     var dismissBtn = document.createElement("button");
@@ -301,10 +330,27 @@
       "flex:1;padding:6px 8px;border:1px solid #555;border-radius:6px;background:transparent;color:#ddd;" +
       "font-size:12px;cursor:pointer;";
     var dismissed = false;
+    var lastProgressAt = 0;
+    function sendVideoProgress(completedFull){
+      postJson("/api/widget/video-progress", {
+        token: TOKEN, execution_id: executionId, session_key: SESSION_KEY,
+        watch_duration_ms: Math.floor((video.currentTime || 0) * 1000),
+        completed_full: !!completedFull
+      }).catch(function(){});
+    }
+    video.addEventListener("timeupdate", function(){
+      if (dismissed) return;
+      var now = Date.now();
+      if (now - lastProgressAt < 3000) return;
+      lastProgressAt = now;
+      sendVideoProgress(false);
+    });
+    video.addEventListener("ended", function(){ sendVideoProgress(true); });
     function dismiss(){
       if (dismissed) return;
       dismissed = true;
       try { video.pause(); } catch(e){}
+      sendVideoProgress(false);
       postJson("/api/widget/video-dismiss", {
         token: TOKEN, execution_id: executionId, session_key: SESSION_KEY
       }).catch(function(){});
@@ -362,7 +408,7 @@
       console.error("myLittleFairyWidget.show: передайте ключ события");
       return;
     }
-    beginAndPlay({ token: TOKEN, event_key: key, session_key: SESSION_KEY }, function(){
+    beginAndPlay({ token: TOKEN, event_key: key, session_key: SESSION_KEY, page_url: pageUrl() }, function(){
       console.warn("myLittleFairyWidget: событие не выполнено — см. кабинет");
     });
   }
@@ -375,7 +421,7 @@
       preloadImage(SPRITE_URL, function(){
         autoTimer = setTimeout(function(){
           autoTimer = null;
-          beginAndPlay({ token: TOKEN, event_key: STANDARD_EVENT_KEY, session_key: SESSION_KEY }, function(){});
+          beginAndPlay({ token: TOKEN, event_key: STANDARD_EVENT_KEY, session_key: SESSION_KEY, page_url: pageUrl() }, function(){});
         }, WAIT_BEFORE_FLY_MS);
       });
     }

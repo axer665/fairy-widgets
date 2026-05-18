@@ -125,10 +125,24 @@ final class FairyController
             $sb = $b['standard_behavior'];
             $val = is_bool($sb) ? $sb : (bool) (int) $sb;
             $appIdForFairy = (int) $fairy['application_id'];
+            $twSt = $pdo->prepare(
+                'SELECT id FROM widget_text_widgets WHERE application_id = ? AND name = ? LIMIT 1',
+            );
+            $twSt->execute([$appIdForFairy, 'Приветствие']);
+            $twId = $twSt->fetchColumn();
+            if ($twId === false) {
+                $pdo->prepare(
+                    'INSERT INTO widget_text_widgets (application_id, name, body) VALUES (?,?,?)',
+                )->execute([$appIdForFairy, 'Приветствие', 'Привет! Я фея виджета.']);
+                $twId = (int) $pdo->lastInsertId();
+            } else {
+                $twId = (int) $twId;
+            }
             $pdo->prepare(
-                'INSERT INTO widget_events (application_id, event_key, phrase) VALUES (?,?,?)
-                 ON DUPLICATE KEY UPDATE id = id',
-            )->execute([$appIdForFairy, '_standard', 'Привет! Я фея виджета.']);
+                'INSERT INTO widget_events (application_id, event_key, action_type_id, text_widget_id)
+                 VALUES (?,?,?,?)
+                 ON DUPLICATE KEY UPDATE text_widget_id = VALUES(text_widget_id)',
+            )->execute([$appIdForFairy, '_standard', 1, $twId]);
             $wst = $pdo->prepare(
                 'SELECT id FROM widget_events WHERE application_id = ? AND event_key = ? LIMIT 1',
             );

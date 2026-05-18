@@ -13,13 +13,19 @@ use PDO;
 
 final class WidgetEventController
 {
-    private const EVENT_SELECT = 'SELECT we.id, we.event_key, we.phrase, we.action_type_id,
-            we.survey_title, we.video_media_id, we.video_link_url,
+    private const EVENT_SELECT = 'SELECT we.id, we.event_key, we.action_type_id,
+            we.text_widget_id, we.survey_widget_id, we.video_widget_id,
             we.pos_h_edge, we.pos_v_edge, we.pos_unit, we.pos_x, we.pos_y,
             we.created_at, we.updated_at,
-            wat.code AS action_type_code, wat.label AS action_type_label
+            wat.code AS action_type_code, wat.label AS action_type_label,
+            tw.name AS text_widget_name, tw.body AS text_body,
+            sw.name AS survey_widget_name, sw.title AS survey_title, sw.description AS survey_description,
+            vw.name AS video_widget_name, vw.media_id AS video_media_id, vw.link_url AS video_link_url
          FROM widget_events we
-         INNER JOIN widget_action_types wat ON wat.id = we.action_type_id';
+         INNER JOIN widget_action_types wat ON wat.id = we.action_type_id
+         LEFT JOIN widget_text_widgets tw ON tw.id = we.text_widget_id
+         LEFT JOIN widget_survey_widgets sw ON sw.id = we.survey_widget_id
+         LEFT JOIN widget_video_widgets vw ON vw.id = we.video_widget_id';
 
     public function __construct(
         private readonly Database $db,
@@ -86,15 +92,12 @@ final class WidgetEventController
                 422,
             );
         }
-        $parsed = EventAction::parseEventInput($b, $eventKey);
-        if ($parsed === null) {
+        $parsed = EventAction::parseEventLink($b, $eventKey);
+        if ($parsed === null || !$this->validateWidgetLink($appId, $parsed)) {
             return Response::json(
                 ['error' => 'validation', 'message' => $this->validationMessage($b, $eventKey)],
                 422,
             );
-        }
-        if (!$this->validateVideoMedia($appId, $parsed['video_media_id'])) {
-            return Response::json(['error' => 'validation', 'message' => 'Видео не найдено в контенте заявки'], 422);
         }
         $positionInput = null;
         if (array_key_exists('position', $b)) {
@@ -174,7 +177,7 @@ final class WidgetEventController
     }
 
     /** @param array<string, mixed> $row */
-    public function mapEventRow(array $row, ?string $videoPlayUrl = null): array
+    public function mapEventRow(array $row): array
     {
         $out = [
             'id' => (int) $row['id'],
@@ -184,27 +187,35 @@ final class WidgetEventController
             'updated_at' => $row['updated_at'] ?? null,
         ];
 
-        return array_merge($out, EventAction::toApiPayload($row, $videoPlayUrl));
+        return array_merge($out, EventAction::toApiPayload($row));
     }
 
-    /** @param array{type_id: int, phrase: string, survey_title: ?string, video_media_id: ?int, video_link_url: ?string} $parsed */
+    /**
+     * @param array{
+     *   type_id: int,
+     *   type_code: string,
+     *   text_widget_id: ?int,
+     *   survey_widget_id: ?int,
+     *   video_widget_id: ?int
+     * } $parsed
+     */
     private function insertEventRow(PDO $pdo, int $appId, string $eventKey, array $parsed, ?array $positionInput): void
     {
         $pos = $positionInput ?? EventLandPosition::defaults();
         $dbPos = EventLandPosition::toDbParams($pos);
         $pdo->prepare(
             'INSERT INTO widget_events (
-                application_id, event_key, phrase, action_type_id, survey_title, video_media_id, video_link_url,
+                application_id, event_key, action_type_id,
+                text_widget_id, survey_widget_id, video_widget_id,
                 pos_h_edge, pos_v_edge, pos_unit, pos_x, pos_y
-             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
         )->execute([
             $appId,
             $eventKey,
-            $parsed['phrase'],
             $parsed['type_id'],
-            $parsed['survey_title'],
-            $parsed['video_media_id'],
-            $parsed['video_link_url'],
+            $parsed['text_widget_id'],
+            $parsed['survey_widget_id'],
+            $parsed['video_widget_id'],
             $dbPos['pos_h_edge'],
             $dbPos['pos_v_edge'],
             $dbPos['pos_unit'],
@@ -213,21 +224,20 @@ final class WidgetEventController
         ]);
     }
 
-    /** @param array{type_id: int, phrase: string, survey_title: ?string, video_media_id: ?int, video_link_url: ?string} $parsed */
+    /** @param array{type_id: int, type_code: string, text_widget_id: ?int, survey_widget_id: ?int, video_widget_id: ?int} $parsed */
     private function updateEventRow(PDO $pdo, int $id, array $parsed, ?array $positionInput): void
     {
         if ($positionInput !== null) {
             $dbPos = EventLandPosition::toDbParams($positionInput);
             $pdo->prepare(
-                'UPDATE widget_events SET phrase = ?, action_type_id = ?, survey_title = ?, video_media_id = ?,
-                 video_link_url = ?, pos_h_edge = ?, pos_v_edge = ?, pos_unit = ?, pos_x = ?, pos_y = ?,
+                'UPDATE widget_events SET action_type_id = ?, text_widget_id = ?, survey_widget_id = ?,
+                 video_widget_id = ?, pos_h_edge = ?, pos_v_edge = ?, pos_unit = ?, pos_x = ?, pos_y = ?,
                  updated_at = CURRENT_TIMESTAMP WHERE id = ?',
             )->execute([
-                $parsed['phrase'],
                 $parsed['type_id'],
-                $parsed['survey_title'],
-                $parsed['video_media_id'],
-                $parsed['video_link_url'],
+                $parsed['text_widget_id'],
+                $parsed['survey_widget_id'],
+                $parsed['video_widget_id'],
                 $dbPos['pos_h_edge'],
                 $dbPos['pos_v_edge'],
                 $dbPos['pos_unit'],
@@ -237,30 +247,50 @@ final class WidgetEventController
             ]);
         } else {
             $pdo->prepare(
-                'UPDATE widget_events SET phrase = ?, action_type_id = ?, survey_title = ?, video_media_id = ?,
-                 video_link_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                'UPDATE widget_events SET action_type_id = ?, text_widget_id = ?, survey_widget_id = ?,
+                 video_widget_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
             )->execute([
-                $parsed['phrase'],
                 $parsed['type_id'],
-                $parsed['survey_title'],
-                $parsed['video_media_id'],
-                $parsed['video_link_url'],
+                $parsed['text_widget_id'],
+                $parsed['survey_widget_id'],
+                $parsed['video_widget_id'],
                 $id,
             ]);
         }
     }
 
-    private function validateVideoMedia(int $appId, ?int $mediaId): bool
+    /**
+     * @param array{
+     *   type_id: int,
+     *   type_code: string,
+     *   text_widget_id: ?int,
+     *   survey_widget_id: ?int,
+     *   video_widget_id: ?int
+     * } $parsed
+     */
+    private function validateWidgetLink(int $appId, array $parsed): bool
     {
-        if ($mediaId === null) {
-            return true;
-        }
-        $st = $this->db->pdo()->prepare(
-            'SELECT id FROM widget_media_assets WHERE id = ? AND application_id = ? LIMIT 1',
-        );
-        $st->execute([$mediaId, $appId]);
+        $pdo = $this->db->pdo();
+        if ($parsed['text_widget_id'] !== null) {
+            $st = $pdo->prepare('SELECT id FROM widget_text_widgets WHERE id = ? AND application_id = ? LIMIT 1');
+            $st->execute([$parsed['text_widget_id'], $appId]);
 
-        return (bool) $st->fetch(PDO::FETCH_ASSOC);
+            return (bool) $st->fetch(PDO::FETCH_ASSOC);
+        }
+        if ($parsed['survey_widget_id'] !== null) {
+            $st = $pdo->prepare('SELECT id FROM widget_survey_widgets WHERE id = ? AND application_id = ? LIMIT 1');
+            $st->execute([$parsed['survey_widget_id'], $appId]);
+
+            return (bool) $st->fetch(PDO::FETCH_ASSOC);
+        }
+        if ($parsed['video_widget_id'] !== null) {
+            $st = $pdo->prepare('SELECT id FROM widget_video_widgets WHERE id = ? AND application_id = ? LIMIT 1');
+            $st->execute([$parsed['video_widget_id'], $appId]);
+
+            return (bool) $st->fetch(PDO::FETCH_ASSOC);
+        }
+
+        return false;
     }
 
     /** @param array<string, mixed> $b */
@@ -268,13 +298,13 @@ final class WidgetEventController
     {
         $type = EventAction::normalizeTypeCode((string) ($b['action_type'] ?? EventAction::TYPE_TEXT));
         if ($eventKey === '_standard') {
-            return 'Для _standard нужен непустой phrase (текст)';
+            return 'Для _standard выберите текстовый виджет (widget_id)';
         }
 
         return match ($type) {
-            EventAction::TYPE_SURVEY => 'Для опроса укажите survey_title (до 512 символов)',
-            EventAction::TYPE_VIDEO => 'Для видео выберите video_media_id из вкладки «Контент»; video_link_url — опционально (https)',
-            default => 'Для текста укажите phrase',
+            EventAction::TYPE_SURVEY => 'Выберите виджет опроса (widget_id) во вкладке «Опросы»',
+            EventAction::TYPE_VIDEO => 'Выберите видео-виджет (widget_id) во вкладке «Видео»',
+            default => 'Выберите текстовый виджет (widget_id) во вкладке «Текст»',
         };
     }
 
@@ -291,17 +321,37 @@ final class WidgetEventController
     private function ensureStandardWelcomeEvent(int $applicationId): void
     {
         $pdo = $this->db->pdo();
+        $twSt = $pdo->prepare(
+            'SELECT id FROM widget_text_widgets WHERE application_id = ? AND name = ? LIMIT 1',
+        );
+        $twSt->execute([$applicationId, 'Приветствие']);
+        $twId = $twSt->fetchColumn();
+        if ($twId === false) {
+            $pdo->prepare(
+                'INSERT INTO widget_text_widgets (application_id, name, body) VALUES (?,?,?)',
+            )->execute([$applicationId, 'Приветствие', 'Привет! Я фея виджета.']);
+            $twId = (int) $pdo->lastInsertId();
+        } else {
+            $twId = (int) $twId;
+        }
         $pdo->prepare(
-            'INSERT INTO widget_events (application_id, event_key, phrase, action_type_id) VALUES (?,?,?,?)
-             ON DUPLICATE KEY UPDATE id = id',
-        )->execute([$applicationId, '_standard', 'Привет! Я фея виджета.', EventAction::TYPE_ID_TEXT]);
-        $pdo->prepare(
-            'INSERT IGNORE INTO fairy_events (fairy_id, widget_event_id)
-             SELECT f.id, we.id
-             FROM widget_fairies f
-             INNER JOIN widget_events we ON we.application_id = f.application_id AND we.event_key = ?
-             WHERE f.application_id = ? AND f.standard_behavior = 1',
-        )->execute(['_standard', $applicationId]);
+            'INSERT INTO widget_events (application_id, event_key, action_type_id, text_widget_id)
+             VALUES (?,?,?,?)
+             ON DUPLICATE KEY UPDATE text_widget_id = VALUES(text_widget_id), action_type_id = VALUES(action_type_id)',
+        )->execute([$applicationId, '_standard', EventAction::TYPE_ID_TEXT, $twId]);
+        $st = $pdo->prepare(
+            'SELECT id FROM widget_events WHERE application_id = ? AND event_key = ? LIMIT 1',
+        );
+        $st->execute([$applicationId, '_standard']);
+        $weId = (int) $st->fetchColumn();
+        if ($weId > 0) {
+            $pdo->prepare(
+                'INSERT IGNORE INTO fairy_events (fairy_id, widget_event_id)
+                 SELECT f.id, ?
+                 FROM widget_fairies f
+                 WHERE f.application_id = ? AND f.standard_behavior = 1',
+            )->execute([$weId, $applicationId]);
+        }
     }
 
     private function ownsApplication(int $applicationId, int $userId): bool

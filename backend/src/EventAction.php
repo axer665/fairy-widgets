@@ -59,95 +59,29 @@ final class EventAction
      * @param array<string, mixed> $input
      * @return array{
      *   type_id: int,
-     *   phrase: string,
-     *   survey_title: ?string,
-     *   video_media_id: ?int,
-     *   video_link_url: ?string
+     *   type_code: string,
+     *   text_widget_id: ?int,
+     *   survey_widget_id: ?int,
+     *   video_widget_id: ?int
      * }|null
      */
-    public static function parseEventInput(array $input, string $eventKey): ?array
+    public static function parseEventLink(array $input, string $eventKey): ?array
     {
         $typeCode = self::normalizeTypeCode((string) ($input['action_type'] ?? self::TYPE_TEXT));
         if ($eventKey === '_standard') {
             $typeCode = self::TYPE_TEXT;
         }
-        $phrase = trim((string) ($input['phrase'] ?? ''));
-        $surveyTitle = trim((string) ($input['survey_title'] ?? ''));
-        $videoMediaId = isset($input['video_media_id']) ? (int) $input['video_media_id'] : null;
-        if ($videoMediaId !== null && $videoMediaId < 1) {
-            $videoMediaId = null;
-        }
-        $videoLinkUrl = trim((string) ($input['video_link_url'] ?? ''));
-        if ($videoLinkUrl !== '' && !self::isValidHttpUrl($videoLinkUrl)) {
-            return null;
-        }
-        if ($videoLinkUrl === '') {
-            $videoLinkUrl = null;
-        }
-
-        return match ($typeCode) {
-            self::TYPE_SURVEY => self::parseSurvey($phrase, $surveyTitle),
-            self::TYPE_VIDEO => self::parseVideo($phrase, $videoMediaId, $videoLinkUrl),
-            default => self::parseText($phrase),
-        };
-    }
-
-    /** @return array{type_id: int, phrase: string, survey_title: ?string, video_media_id: ?int, video_link_url: ?string}|null */
-    private static function parseText(string $phrase): ?array
-    {
-        if ($phrase === '') {
-            return null;
-        }
-        if (mb_strlen($phrase) > 2000) {
+        $widgetId = isset($input['widget_id']) ? (int) $input['widget_id'] : 0;
+        if ($widgetId < 1) {
             return null;
         }
 
         return [
-            'type_id' => self::TYPE_ID_TEXT,
-            'phrase' => $phrase,
-            'survey_title' => null,
-            'video_media_id' => null,
-            'video_link_url' => null,
-        ];
-    }
-
-    /** @return array{type_id: int, phrase: string, survey_title: ?string, video_media_id: ?int, video_link_url: ?string}|null */
-    private static function parseSurvey(string $phrase, string $surveyTitle): ?array
-    {
-        if ($surveyTitle === '' || mb_strlen($surveyTitle) > 512) {
-            return null;
-        }
-        if ($phrase !== '' && mb_strlen($phrase) > 2000) {
-            return null;
-        }
-
-        return [
-            'type_id' => self::TYPE_ID_SURVEY,
-            'phrase' => $phrase !== '' ? $phrase : $surveyTitle,
-            'survey_title' => $surveyTitle,
-            'video_media_id' => null,
-            'video_link_url' => null,
-        ];
-    }
-
-    /**
-     * @return array{type_id: int, phrase: string, survey_title: ?string, video_media_id: ?int, video_link_url: ?string}|null
-     */
-    private static function parseVideo(string $phrase, ?int $videoMediaId, ?string $videoLinkUrl): ?array
-    {
-        if ($videoMediaId === null || $videoMediaId < 1) {
-            return null;
-        }
-        if ($phrase !== '' && mb_strlen($phrase) > 2000) {
-            return null;
-        }
-
-        return [
-            'type_id' => self::TYPE_ID_VIDEO,
-            'phrase' => $phrase !== '' ? $phrase : 'Видео',
-            'survey_title' => null,
-            'video_media_id' => $videoMediaId,
-            'video_link_url' => $videoLinkUrl,
+            'type_id' => self::typeIdFromCode($typeCode),
+            'type_code' => $typeCode,
+            'text_widget_id' => $typeCode === self::TYPE_TEXT ? $widgetId : null,
+            'survey_widget_id' => $typeCode === self::TYPE_SURVEY ? $widgetId : null,
+            'video_widget_id' => $typeCode === self::TYPE_VIDEO ? $widgetId : null,
         ];
     }
 
@@ -155,50 +89,59 @@ final class EventAction
      * @param array<string, mixed> $row
      * @return array<string, mixed>
      */
-    public static function toApiPayload(array $row, ?string $videoPlayUrl = null): array
+    public static function toApiPayload(array $row): array
     {
         $type = self::typeCodeFromRow($row);
         $base = [
             'action_type' => $type,
             'action_type_label' => (string) ($row['action_type_label'] ?? $type),
         ];
+
         if ($type === self::TYPE_SURVEY) {
+            $base['widget_id'] = (int) ($row['survey_widget_id'] ?? 0);
+            $base['widget_name'] = (string) ($row['survey_widget_name'] ?? '');
             $base['survey_title'] = (string) ($row['survey_title'] ?? '');
-            $base['phrase'] = (string) ($row['phrase'] ?? '');
+            $base['survey_description'] = $row['survey_description'] !== null
+                ? (string) $row['survey_description'] : null;
         } elseif ($type === self::TYPE_VIDEO) {
-            $base['video_media_id'] = isset($row['video_media_id']) ? (int) $row['video_media_id'] : null;
+            $base['widget_id'] = (int) ($row['video_widget_id'] ?? 0);
+            $base['widget_name'] = (string) ($row['video_widget_name'] ?? '');
+            $base['media_id'] = isset($row['video_media_id']) ? (int) $row['video_media_id'] : null;
             $base['video_link_url'] = $row['video_link_url'] !== null && $row['video_link_url'] !== ''
                 ? (string) $row['video_link_url'] : null;
-            $base['phrase'] = (string) ($row['phrase'] ?? 'Видео');
-            if ($videoPlayUrl !== null) {
-                $base['video_url'] = $videoPlayUrl;
-            }
         } else {
-            $base['phrase'] = (string) ($row['phrase'] ?? '');
+            $base['widget_id'] = (int) ($row['text_widget_id'] ?? 0);
+            $base['widget_name'] = (string) ($row['text_widget_name'] ?? '');
+            $base['phrase'] = (string) ($row['text_body'] ?? '');
         }
 
         return $base;
     }
 
     /**
-     * @param array<string, mixed> $row
+     * @param array<string, mixed> $contentRow joined widget content
      * @return array<string, mixed>
      */
-    public static function toWidgetPayload(array $row, ?string $videoPlayUrl = null): array
+    public static function toWidgetPayload(string $type, array $contentRow, ?string $videoPlayUrl = null): array
     {
-        $type = self::typeCodeFromRow($row);
         if ($type === self::TYPE_SURVEY) {
-            return [
+            $payload = [
                 'type' => self::TYPE_SURVEY,
-                'survey_title' => (string) ($row['survey_title'] ?? $row['phrase'] ?? ''),
+                'survey_title' => (string) ($contentRow['title'] ?? ''),
             ];
+            $desc = $contentRow['description'] ?? null;
+            if ($desc !== null && (string) $desc !== '') {
+                $payload['survey_description'] = (string) $desc;
+            }
+
+            return $payload;
         }
         if ($type === self::TYPE_VIDEO) {
             $payload = ['type' => self::TYPE_VIDEO];
             if ($videoPlayUrl !== null && $videoPlayUrl !== '') {
                 $payload['video_url'] = $videoPlayUrl;
             }
-            $link = $row['video_link_url'] ?? null;
+            $link = $contentRow['link_url'] ?? null;
             if ($link !== null && (string) $link !== '') {
                 $payload['video_link_url'] = (string) $link;
             }
@@ -208,7 +151,7 @@ final class EventAction
 
         return [
             'type' => self::TYPE_TEXT,
-            'phrase' => (string) ($row['phrase'] ?? ''),
+            'phrase' => (string) ($contentRow['body'] ?? ''),
         ];
     }
 

@@ -10,6 +10,7 @@ use App\Controller\FairyController;
 use App\Controller\ModeratorController;
 use App\Controller\TrackController;
 use App\Controller\WidgetController;
+use App\Controller\WidgetContentController;
 use App\Controller\WidgetEventController;
 use App\Controller\WidgetMediaController;
 use App\MediaStorage;
@@ -48,6 +49,7 @@ final class Application
         $modCtrl = new ModeratorController($this->db);
         $widgetCtrl = new WidgetController($this->db, $appUrl);
         $widgetEventCtrl = new WidgetEventController($this->db);
+        $widgetContentCtrl = new WidgetContentController($this->db, $appUrl);
         $mediaStorage = new MediaStorage(dirname(__DIR__) . '/storage/media');
         $mediaCtrl = new WidgetMediaController($this->db, $mediaStorage, $appUrl);
         $trackCtrl = new TrackController($this->db);
@@ -104,6 +106,78 @@ final class Application
             [$json, $auth, $log],
         );
         $this->router->add('GET', '/api/action-types', $widgetEventCtrl->listActionTypes(...), [$json, $auth, $log]);
+        $this->router->add(
+            'GET',
+            '/api/applications/{id}/text-widgets',
+            $widgetContentCtrl->listText(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'POST',
+            '/api/applications/{id}/text-widgets',
+            $widgetContentCtrl->createText(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'PUT',
+            '/api/applications/{id}/text-widgets/{widgetId}',
+            $widgetContentCtrl->updateText(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'DELETE',
+            '/api/applications/{id}/text-widgets/{widgetId}',
+            $widgetContentCtrl->deleteText(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'GET',
+            '/api/applications/{id}/survey-widgets',
+            $widgetContentCtrl->listSurvey(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'POST',
+            '/api/applications/{id}/survey-widgets',
+            $widgetContentCtrl->createSurvey(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'PUT',
+            '/api/applications/{id}/survey-widgets/{widgetId}',
+            $widgetContentCtrl->updateSurvey(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'DELETE',
+            '/api/applications/{id}/survey-widgets/{widgetId}',
+            $widgetContentCtrl->deleteSurvey(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'GET',
+            '/api/applications/{id}/video-widgets',
+            $widgetContentCtrl->listVideo(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'POST',
+            '/api/applications/{id}/video-widgets',
+            $widgetContentCtrl->createVideo(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'PUT',
+            '/api/applications/{id}/video-widgets/{widgetId}',
+            $widgetContentCtrl->updateVideo(...),
+            [$json, $auth, $log],
+        );
+        $this->router->add(
+            'DELETE',
+            '/api/applications/{id}/video-widgets/{widgetId}',
+            $widgetContentCtrl->deleteVideo(...),
+            [$json, $auth, $log],
+        );
         $this->router->add(
             'GET',
             '/api/applications/{id}/media',
@@ -186,6 +260,24 @@ final class Application
             ['POST', 'OPTIONS'],
             '/api/widget/video-dismiss',
             $widgetCtrl->videoDismiss(...),
+            [$corsWidget, $json, $log],
+        );
+        $this->router->add(
+            ['POST', 'OPTIONS'],
+            '/api/widget/survey-dismiss',
+            $widgetCtrl->surveyDismiss(...),
+            [$corsWidget, $json, $log],
+        );
+        $this->router->add(
+            ['POST', 'OPTIONS'],
+            '/api/widget/video-progress',
+            $widgetCtrl->videoProgress(...),
+            [$corsWidget, $json, $log],
+        );
+        $this->router->add(
+            ['POST', 'OPTIONS'],
+            '/api/widget/video-link-click',
+            $widgetCtrl->videoLinkClick(...),
             [$corsWidget, $json, $log],
         );
         $this->router->add('GET', '/widget/media/{mediaId}', $mediaCtrl->serveForWidget(...), [$corsWidget, $log]);

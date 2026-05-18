@@ -7,6 +7,7 @@ namespace App\Controller;
 use App\EventAction;
 use App\EventLandPosition;
 use App\Database;
+use App\WidgetStats;
 use App\Http\Request;
 use App\Http\Response;
 use App\Util\HostNormalizer;
@@ -96,7 +97,9 @@ final class WidgetController
             );
         }
 
-        return $this->beginEventForApplication($appId, $eventKey, $sessionKey, $token);
+        $pageUrl = trim((string) ($b['page_url'] ?? ''));
+
+        return $this->beginEventForApplication($appId, $eventKey, $sessionKey, $token, $pageUrl);
     }
 
     public function surveyRate(Request $request): Response
@@ -126,7 +129,7 @@ final class WidgetController
         }
         $pdo = $this->db->pdo();
         $st = $pdo->prepare(
-            'SELECT x.id, x.widget_event_id, x.completed_at, we.action_type_id
+            'SELECT x.id, x.widget_event_id, x.completed_at, we.action_type_id, we.survey_widget_id
              FROM widget_event_executions x
              INNER JOIN widget_fairies f ON f.id = x.fairy_id
              INNER JOIN widget_events we ON we.id = x.widget_event_id
@@ -141,11 +144,22 @@ final class WidgetController
             return Response::json(['ok' => true]);
         }
         $widgetEventId = (int) $row['widget_event_id'];
+        $surveyWidgetId = (int) ($row['survey_widget_id'] ?? 0);
         $pdo->prepare(
-            'INSERT INTO widget_survey_ratings (application_id, widget_event_id, execution_id, session_key, rating, page_url)
-             VALUES (?,?,?,?,?,?)
-             ON DUPLICATE KEY UPDATE rating = VALUES(rating), page_url = VALUES(page_url)',
-        )->execute([$appId, $widgetEventId, $executionId, $sessionKey, $rating, $pageUrl !== '' ? $pageUrl : null]);
+            'INSERT INTO widget_survey_ratings
+             (application_id, widget_event_id, survey_widget_id, execution_id, session_key, rating, page_url)
+             VALUES (?,?,?,?,?,?,?)
+             ON DUPLICATE KEY UPDATE rating = VALUES(rating), page_url = VALUES(page_url),
+             survey_widget_id = VALUES(survey_widget_id)',
+        )->execute([
+            $appId,
+            $widgetEventId,
+            $surveyWidgetId > 0 ? $surveyWidgetId : null,
+            $executionId,
+            $sessionKey,
+            $rating,
+            $pageUrl !== '' ? $pageUrl : null,
+        ]);
         $this->completeExecutionById($pdo, $executionId, $sessionKey, $token);
 
         return Response::json(['ok' => true]);
@@ -170,7 +184,130 @@ final class WidgetController
             return Response::json(['error' => 'forbidden'], 403);
         }
         $pdo = $this->db->pdo();
+        WidgetStats::recordVideoDismiss($pdo, $executionId);
         $this->completeExecutionById($pdo, $executionId, $sessionKey, $token);
+
+        return Response::json(['ok' => true]);
+    }
+
+    public function surveyDismiss(Request $request): Response
+    {
+        $b = $request->body;
+        if (!is_array($b)) {
+            return Response::json(['error' => 'invalid_json'], 400);
+        }
+        $token = trim((string) ($b['token'] ?? ''));
+        $executionId = isset($b['execution_id']) ? (int) $b['execution_id'] : 0;
+        if ($token === '' || $executionId < 1) {
+            return Response::json(['error' => 'validation'], 422);
+        }
+        $sessionKey = $this->parseSessionKey($b);
+        if ($sessionKey === null) {
+            return Response::json(['error' => 'validation'], 422);
+        }
+        $appRow = $this->resolveApplicationForEmbed($request, $token);
+        if ($appRow === null) {
+            return Response::json(['error' => 'forbidden'], 403);
+        }
+        $appId = (int) $appRow['application_id'];
+        $pdo = $this->db->pdo();
+        $st = $pdo->prepare(
+            'SELECT x.completed_at, we.id AS widget_event_id, we.survey_widget_id
+             FROM widget_event_executions x
+             INNER JOIN widget_fairies f ON f.id = x.fairy_id
+             INNER JOIN widget_events we ON we.id = x.widget_event_id
+             WHERE x.id = ? AND x.session_key = ? AND f.application_id = ? AND we.action_type_id = ?
+             LIMIT 1',
+        );
+        $st->execute([$executionId, $sessionKey, $appId, EventAction::TYPE_ID_SURVEY]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            return Response::json(['error' => 'not_found'], 404);
+        }
+        $surveyWidgetId = (int) ($row['survey_widget_id'] ?? 0);
+        if ($surveyWidgetId > 0 && $row['completed_at'] === null) {
+            WidgetStats::recordSurveyCancel(
+                $pdo,
+                $appId,
+                $surveyWidgetId,
+                (int) $row['widget_event_id'],
+                $executionId,
+                $sessionKey,
+            );
+        }
+        $this->completeExecutionById($pdo, $executionId, $sessionKey, $token);
+
+        return Response::json(['ok' => true]);
+    }
+
+    public function videoProgress(Request $request): Response
+    {
+        $b = $request->body;
+        if (!is_array($b)) {
+            return Response::json(['error' => 'invalid_json'], 400);
+        }
+        $token = trim((string) ($b['token'] ?? ''));
+        $executionId = isset($b['execution_id']) ? (int) $b['execution_id'] : 0;
+        $watchMs = isset($b['watch_duration_ms']) ? (int) $b['watch_duration_ms'] : 0;
+        $completedFull = !empty($b['completed_full']);
+        if ($token === '' || $executionId < 1) {
+            return Response::json(['error' => 'validation'], 422);
+        }
+        $sessionKey = $this->parseSessionKey($b);
+        if ($sessionKey === null) {
+            return Response::json(['error' => 'validation'], 422);
+        }
+        $appRow = $this->resolveApplicationForEmbed($request, $token);
+        if ($appRow === null) {
+            return Response::json(['error' => 'forbidden'], 403);
+        }
+        $pdo = $this->db->pdo();
+        $st = $pdo->prepare(
+            'SELECT x.id FROM widget_event_executions x
+             INNER JOIN widget_fairies f ON f.id = x.fairy_id
+             INNER JOIN widget_events we ON we.id = x.widget_event_id
+             WHERE x.id = ? AND x.session_key = ? AND f.application_id = ? AND we.action_type_id = ?
+             LIMIT 1',
+        );
+        $st->execute([$executionId, $sessionKey, (int) $appRow['application_id'], EventAction::TYPE_ID_VIDEO]);
+        if (!$st->fetch(PDO::FETCH_ASSOC)) {
+            return Response::json(['error' => 'not_found'], 404);
+        }
+        WidgetStats::recordVideoProgress($pdo, $executionId, $watchMs, $completedFull);
+
+        return Response::json(['ok' => true]);
+    }
+
+    public function videoLinkClick(Request $request): Response
+    {
+        $b = $request->body;
+        if (!is_array($b)) {
+            return Response::json(['error' => 'invalid_json'], 400);
+        }
+        $token = trim((string) ($b['token'] ?? ''));
+        $executionId = isset($b['execution_id']) ? (int) $b['execution_id'] : 0;
+        if ($token === '' || $executionId < 1) {
+            return Response::json(['error' => 'validation'], 422);
+        }
+        $sessionKey = $this->parseSessionKey($b);
+        if ($sessionKey === null) {
+            return Response::json(['error' => 'validation'], 422);
+        }
+        $appRow = $this->resolveApplicationForEmbed($request, $token);
+        if ($appRow === null) {
+            return Response::json(['error' => 'forbidden'], 403);
+        }
+        $pdo = $this->db->pdo();
+        $st = $pdo->prepare(
+            'SELECT x.id FROM widget_event_executions x
+             INNER JOIN widget_fairies f ON f.id = x.fairy_id
+             WHERE x.id = ? AND x.session_key = ? AND f.application_id = ? LIMIT 1',
+        );
+        $st->execute([$executionId, $sessionKey, (int) $appRow['application_id']]);
+        if (!$st->fetch(PDO::FETCH_ASSOC)) {
+            return Response::json(['error' => 'not_found'], 404);
+        }
+        WidgetStats::recordVideoLinkClick($pdo, $executionId);
 
         return Response::json(['ok' => true]);
     }
@@ -288,15 +425,20 @@ final class WidgetController
         return $id !== false ? (int) $id : 0;
     }
 
-    private function beginEventForApplication(int $appId, string $eventKey, string $sessionKey, string $widgetToken): Response
-    {
+    private function beginEventForApplication(
+        int $appId,
+        string $eventKey,
+        string $sessionKey,
+        string $widgetToken,
+        string $pageUrl = '',
+    ): Response {
         $pdo = $this->db->pdo();
         $logFairy = $this->firstFairyIdForLog($pdo, $appId);
         if ($logFairy < 1) {
             return Response::json(['error' => 'not_found'], 404);
         }
         $st = $pdo->prepare(
-            'SELECT we.id, we.phrase, we.action_type_id, we.survey_title, we.video_media_id, we.video_link_url,
+            'SELECT we.id, we.action_type_id, we.text_widget_id, we.survey_widget_id, we.video_widget_id,
                     we.pos_h_edge, we.pos_v_edge, we.pos_unit, we.pos_x, we.pos_y,
                     wat.code AS action_type_code, wat.label AS action_type_label
              FROM widget_events we
@@ -321,12 +463,30 @@ final class WidgetController
         }
         $widgetEventId = (int) $ev['id'];
         $landPosition = EventLandPosition::fromDbRow($ev);
-        $videoUrl = null;
-        $mediaId = isset($ev['video_media_id']) ? (int) $ev['video_media_id'] : 0;
-        if ($mediaId > 0 && EventAction::typeCodeFromRow($ev) === EventAction::TYPE_VIDEO) {
-            $videoUrl = $this->widgetMediaPlayUrl($mediaId, $widgetToken);
+        $type = EventAction::typeCodeFromRow($ev);
+        $content = $this->loadContentForEvent($pdo, $appId, $type, $ev);
+        if ($content === null) {
+            $this->insertFailure(
+                $pdo,
+                $appId,
+                $logFairy,
+                $widgetEventId,
+                $eventKey,
+                self::REASON_NOT_FOUND,
+                'Виджет не настроен для события',
+                null,
+            );
+
+            return Response::json(['error' => 'conflict', 'reason' => self::REASON_NOT_FOUND], 409);
         }
-        $action = EventAction::toWidgetPayload($ev, $videoUrl);
+        $videoUrl = null;
+        if ($type === EventAction::TYPE_VIDEO) {
+            $mediaId = (int) ($content['media_id'] ?? 0);
+            if ($mediaId > 0) {
+                $videoUrl = $this->widgetMediaPlayUrl($mediaId, $widgetToken);
+            }
+        }
+        $action = EventAction::toWidgetPayload($type, $content, $videoUrl);
         $cst = $pdo->prepare(
             'SELECT f.id FROM widget_fairies f
              INNER JOIN fairy_events fe ON fe.fairy_id = f.id AND fe.widget_event_id = ?
@@ -418,12 +578,20 @@ final class WidgetController
                         'INSERT INTO widget_event_executions (fairy_id, widget_event_id, kind, session_key) VALUES (?,?,?,?)',
                     )->execute([$fairyId, $widgetEventId, 'event', $sessionKey]);
                     $execId = (int) $pdo->lastInsertId();
+                    WidgetStats::recordImpression(
+                        $pdo,
+                        $appId,
+                        $widgetEventId,
+                        $execId,
+                        $sessionKey,
+                        $ev,
+                        $pageUrl !== '' ? $pageUrl : null,
+                    );
                     $pdo->query('SELECT RELEASE_LOCK(' . $pdo->quote($lockName) . ')');
                     $pdo->commit();
 
                     return Response::json([
                         'execution_id' => $execId,
-                        'phrase' => (string) $ev['phrase'],
                         'position' => $landPosition,
                         'action' => $action,
                     ]);
@@ -597,6 +765,61 @@ final class WidgetController
         )->execute([$fairyId]);
     }
 
+    /**
+     * @param array<string, mixed> $ev
+     * @return array<string, mixed>|null
+     */
+    private function loadContentForEvent(PDO $pdo, int $appId, string $type, array $ev): ?array
+    {
+        if ($type === EventAction::TYPE_TEXT) {
+            $id = (int) ($ev['text_widget_id'] ?? 0);
+            if ($id < 1) {
+                return null;
+            }
+            $st = $pdo->prepare(
+                'SELECT body FROM widget_text_widgets WHERE id = ? AND application_id = ? LIMIT 1',
+            );
+            $st->execute([$id, $appId]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+
+            return $row ? ['body' => (string) $row['body']] : null;
+        }
+        if ($type === EventAction::TYPE_SURVEY) {
+            $id = (int) ($ev['survey_widget_id'] ?? 0);
+            if ($id < 1) {
+                return null;
+            }
+            $st = $pdo->prepare(
+                'SELECT title, description FROM widget_survey_widgets WHERE id = ? AND application_id = ? LIMIT 1',
+            );
+            $st->execute([$id, $appId]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+
+            return $row ? [
+                'title' => (string) $row['title'],
+                'description' => $row['description'],
+            ] : null;
+        }
+        if ($type === EventAction::TYPE_VIDEO) {
+            $id = (int) ($ev['video_widget_id'] ?? 0);
+            if ($id < 1) {
+                return null;
+            }
+            $st = $pdo->prepare(
+                'SELECT media_id, link_url FROM widget_video_widgets WHERE id = ? AND application_id = ? LIMIT 1',
+            );
+            $st->execute([$id, $appId]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+
+            return $row ? [
+                'media_id' => (int) $row['media_id'],
+                'link_url' => $row['link_url'],
+            ] : null;
+        }
+
+        return null;
+    }
+
     private function widgetMediaPlayUrl(int $mediaId, string $widgetToken): string
     {
         return rtrim($this->appUrl, '/') . '/widget/media/' . $mediaId . '?token=' . rawurlencode($widgetToken);
@@ -650,7 +873,7 @@ final class WidgetController
             '{{API}}' => addslashes($apiBase),
             '{{TOKEN}}' => addslashes($widgetToken),
             '{{AUTO_STANDARD}}' => $autoStandardWelcome ? 'true' : 'false',
-            '{{VERSION}}' => '9',
+            '{{VERSION}}' => '10',
         ];
 
         return str_replace(array_keys($replacements), array_values($replacements), $js);

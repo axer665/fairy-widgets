@@ -133,7 +133,16 @@ final class WidgetMediaController
         if (!$row) {
             return Response::json(['error' => 'not_found'], 404);
         }
-        $pdo->prepare('UPDATE widget_events SET video_media_id = NULL WHERE video_media_id = ?')->execute([$mediaId]);
+        $useSt = $pdo->prepare(
+            'SELECT id FROM widget_video_widgets WHERE media_id = ? AND application_id = ? LIMIT 1',
+        );
+        $useSt->execute([$mediaId, $appId]);
+        if ($useSt->fetchColumn() !== false) {
+            return Response::json(
+                ['error' => 'validation', 'message' => 'Файл используется видео-виджетом'],
+                422,
+            );
+        }
         $pdo->prepare('DELETE FROM widget_media_assets WHERE id = ?')->execute([$mediaId]);
         $this->mediaStorage->deleteFile($appId, (string) $row['stored_filename']);
 
