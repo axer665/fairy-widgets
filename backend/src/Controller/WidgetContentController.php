@@ -63,13 +63,13 @@ final class WidgetContentController
         if (!$this->textWidgetOwned($appId, $wid)) {
             return Response::json(['error' => 'not_found'], 404);
         }
-        $parsed = $this->parseTextBody($request);
+        $parsed = $this->parseTextUpdate($request);
         if ($parsed === null) {
-            return Response::json(['error' => 'validation'], 422);
+            return Response::json(['error' => 'validation', 'message' => 'body обязателен (до 2000 символов)'], 422);
         }
         $this->db->pdo()->prepare(
-            'UPDATE widget_text_widgets SET name = ?, body = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        )->execute([$parsed['name'], $parsed['body'], $wid]);
+            'UPDATE widget_text_widgets SET body = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        )->execute([$parsed['body'], $wid]);
 
         return Response::json(['ok' => true]);
     }
@@ -127,14 +127,17 @@ final class WidgetContentController
         if (!$this->surveyWidgetOwned($appId, $wid)) {
             return Response::json(['error' => 'not_found'], 404);
         }
-        $parsed = $this->parseSurveyBody($request);
+        $parsed = $this->parseSurveyUpdate($request);
         if ($parsed === null) {
-            return Response::json(['error' => 'validation'], 422);
+            return Response::json(
+                ['error' => 'validation', 'message' => 'title обязателен (до 512 символов), description — до 2000'],
+                422,
+            );
         }
         $this->db->pdo()->prepare(
-            'UPDATE widget_survey_widgets SET name = ?, title = ?, description = ?,
+            'UPDATE widget_survey_widgets SET title = ?, description = ?,
              updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        )->execute([$parsed['name'], $parsed['title'], $parsed['description'], $wid]);
+        )->execute([$parsed['title'], $parsed['description'], $wid]);
 
         return Response::json(['ok' => true]);
     }
@@ -203,17 +206,16 @@ final class WidgetContentController
         if (!$this->videoWidgetOwned($appId, $wid)) {
             return Response::json(['error' => 'not_found'], 404);
         }
-        $parsed = $this->parseVideoBody($request);
+        $parsed = $this->parseVideoLinkUpdate($request);
         if ($parsed === null) {
-            return Response::json(['error' => 'validation'], 422);
-        }
-        if (!$this->mediaOwned($appId, $parsed['media_id'])) {
-            return Response::json(['error' => 'validation', 'message' => 'Видеофайл не найден'], 422);
+            return Response::json(
+                ['error' => 'validation', 'message' => 'link_url: https-ссылка или пусто'],
+                422,
+            );
         }
         $this->db->pdo()->prepare(
-            'UPDATE widget_video_widgets SET name = ?, media_id = ?, link_url = ?,
-             updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        )->execute([$parsed['name'], $parsed['media_id'], $parsed['link_url'], $wid]);
+            'UPDATE widget_video_widgets SET link_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        )->execute([$parsed['link_url'], $wid]);
 
         return Response::json(['ok' => true]);
     }
@@ -351,6 +353,61 @@ final class WidgetContentController
             'title' => $title,
             'description' => $desc !== '' ? $desc : null,
         ];
+    }
+
+    /** @return array{body: string}|null */
+    private function parseTextUpdate(Request $request): ?array
+    {
+        $b = $request->body;
+        if (!is_array($b)) {
+            return null;
+        }
+        $body = trim((string) ($b['body'] ?? ''));
+        if ($body === '' || mb_strlen($body) > 2000) {
+            return null;
+        }
+
+        return ['body' => $body];
+    }
+
+    /** @return array{title: string, description: ?string}|null */
+    private function parseSurveyUpdate(Request $request): ?array
+    {
+        $b = $request->body;
+        if (!is_array($b)) {
+            return null;
+        }
+        $title = trim((string) ($b['title'] ?? ''));
+        $desc = trim((string) ($b['description'] ?? ''));
+        if ($title === '' || mb_strlen($title) > 512) {
+            return null;
+        }
+        if ($desc !== '' && mb_strlen($desc) > 2000) {
+            return null;
+        }
+
+        return [
+            'title' => $title,
+            'description' => $desc !== '' ? $desc : null,
+        ];
+    }
+
+    /** @return array{link_url: ?string}|null */
+    private function parseVideoLinkUpdate(Request $request): ?array
+    {
+        $b = $request->body;
+        if (!is_array($b)) {
+            return null;
+        }
+        if (!array_key_exists('link_url', $b)) {
+            return null;
+        }
+        $link = trim((string) ($b['link_url'] ?? ''));
+        if ($link !== '' && !EventAction::isValidHttpUrl($link)) {
+            return null;
+        }
+
+        return ['link_url' => $link !== '' ? $link : null];
     }
 
     /** @return array{name: string, media_id: int, link_url: ?string}|null */

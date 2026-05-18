@@ -290,11 +290,31 @@
           <div v-show="appTab(a.id) === 'text'" class="tab-panel" role="tabpanel">
             <h3 class="panel-title">Текстовые виджеты</h3>
             <ul v-if="textWidgets[a.id]?.length" class="widget-list">
-              <li v-for="w in textWidgets[a.id]" :key="w.id" class="widget-card">
-                <strong>{{ w.name }}</strong>
-                <p class="widget-preview">{{ w.body }}</p>
-                <p class="widget-stats muted small">Показов: {{ w.stats.impressions }}</p>
-                <button type="button" class="btn sm danger" @click="deleteTextWidget(a, w)">Удалить</button>
+              <li
+                v-for="w in textWidgets[a.id]"
+                :key="w.id"
+                class="widget-card"
+                :class="{ editing: editingTextWidgetId(a.id) === w.id }"
+              >
+                <template v-if="editingTextWidgetId(a.id) === w.id">
+                  <p class="ev-form-hint muted small">«{{ w.name }}»</p>
+                  <form class="widget-edit-form" @submit.prevent="updateTextWidget(a, w)">
+                    <textarea v-model="textEditForms[w.id].body" rows="3" required maxlength="2000" />
+                    <div class="widget-card-actions">
+                      <button type="submit" class="btn primary sm" :disabled="textEditPending[w.id]">Сохранить</button>
+                      <button type="button" class="btn sm secondary" @click="cancelTextEdit(a.id)">Отмена</button>
+                    </div>
+                  </form>
+                </template>
+                <template v-else>
+                  <strong>{{ w.name }}</strong>
+                  <p class="widget-preview">{{ w.body }}</p>
+                  <p class="widget-stats muted small">Показов: {{ w.stats.impressions }}</p>
+                  <div class="widget-card-actions">
+                    <button type="button" class="btn sm secondary" @click="startTextEdit(a.id, w)">Изменить</button>
+                    <button type="button" class="btn sm danger" @click="deleteTextWidget(a, w)">Удалить</button>
+                  </div>
+                </template>
               </li>
             </ul>
             <p v-else class="muted small">Пока нет текстовых виджетов</p>
@@ -308,16 +328,42 @@
           <div v-show="appTab(a.id) === 'survey'" class="tab-panel" role="tabpanel">
             <h3 class="panel-title">Виджеты опросов</h3>
             <ul v-if="surveyWidgets[a.id]?.length" class="widget-list">
-              <li v-for="w in surveyWidgets[a.id]" :key="w.id" class="widget-card">
-                <strong>{{ w.name }}</strong>
-                <p class="widget-preview">{{ w.title }}</p>
-                <p v-if="w.description" class="muted small">{{ w.description }}</p>
-                <p class="widget-stats muted small">
-                  Показов: {{ w.stats.impressions }} · Оценок: {{ w.stats.ratings_count }}
-                  <template v-if="w.stats.avg_rating != null"> · Средняя: {{ w.stats.avg_rating }}</template>
-                  · Отмен: {{ w.stats.cancellations }}
-                </p>
-                <button type="button" class="btn sm danger" @click="deleteSurveyWidget(a, w)">Удалить</button>
+              <li
+                v-for="w in surveyWidgets[a.id]"
+                :key="w.id"
+                class="widget-card"
+                :class="{ editing: editingSurveyWidgetId(a.id) === w.id }"
+              >
+                <template v-if="editingSurveyWidgetId(a.id) === w.id">
+                  <p class="ev-form-hint muted small">«{{ w.name }}»</p>
+                  <form class="widget-edit-form" @submit.prevent="updateSurveyWidget(a, w)">
+                    <input v-model="surveyEditForms[w.id].title" placeholder="Заголовок" maxlength="512" required />
+                    <textarea
+                      v-model="surveyEditForms[w.id].description"
+                      placeholder="Описание (необязательно)"
+                      rows="2"
+                      maxlength="2000"
+                    />
+                    <div class="widget-card-actions">
+                      <button type="submit" class="btn primary sm" :disabled="surveyEditPending[w.id]">Сохранить</button>
+                      <button type="button" class="btn sm secondary" @click="cancelSurveyEdit(a.id)">Отмена</button>
+                    </div>
+                  </form>
+                </template>
+                <template v-else>
+                  <strong>{{ w.name }}</strong>
+                  <p class="widget-preview">{{ w.title }}</p>
+                  <p v-if="w.description" class="muted small">{{ w.description }}</p>
+                  <p class="widget-stats muted small">
+                    Показов: {{ w.stats.impressions }} · Оценок: {{ w.stats.ratings_count }}
+                    <template v-if="w.stats.avg_rating != null"> · Средняя: {{ w.stats.avg_rating }}</template>
+                    · Отмен: {{ w.stats.cancellations }}
+                  </p>
+                  <div class="widget-card-actions">
+                    <button type="button" class="btn sm secondary" @click="startSurveyEdit(a.id, w)">Изменить</button>
+                    <button type="button" class="btn sm danger" @click="deleteSurveyWidget(a, w)">Удалить</button>
+                  </div>
+                </template>
               </li>
             </ul>
             <p v-else class="muted small">Пока нет опросов</p>
@@ -351,17 +397,42 @@
               </li>
             </ul>
             <ul v-if="videoWidgets[a.id]?.length" class="widget-list">
-              <li v-for="w in videoWidgets[a.id]" :key="w.id" class="widget-card">
-                <strong>{{ w.name }}</strong>
-                <p class="muted small">{{ w.original_filename }}</p>
-                <p class="widget-stats muted small">
-                  Показов: {{ w.stats.impressions }} · Досмотров: {{ w.stats.completed_full_count }} · Кликов:
-                  {{ w.stats.link_clicks }} · Отмен: {{ w.stats.dismissals }}
-                  <template v-if="w.stats.avg_watch_ms != null">
-                    · Ср. просмотр: {{ formatWatchMs(w.stats.avg_watch_ms) }}
-                  </template>
-                </p>
-                <button type="button" class="btn sm danger" @click="deleteVideoWidget(a, w)">Удалить</button>
+              <li
+                v-for="w in videoWidgets[a.id]"
+                :key="w.id"
+                class="widget-card"
+                :class="{ editing: editingVideoWidgetId(a.id) === w.id }"
+              >
+                <template v-if="editingVideoWidgetId(a.id) === w.id">
+                  <p class="ev-form-hint muted small">«{{ w.name }}» · {{ w.original_filename }}</p>
+                  <form class="widget-edit-form" @submit.prevent="updateVideoWidget(a, w)">
+                    <input
+                      v-model="videoEditForms[w.id].link_url"
+                      type="url"
+                      placeholder="Ссылка «Подробнее» (оставьте пустым, чтобы убрать)"
+                    />
+                    <div class="widget-card-actions">
+                      <button type="submit" class="btn primary sm" :disabled="videoEditPending[w.id]">Сохранить</button>
+                      <button type="button" class="btn sm secondary" @click="cancelVideoEdit(a.id)">Отмена</button>
+                    </div>
+                  </form>
+                </template>
+                <template v-else>
+                  <strong>{{ w.name }}</strong>
+                  <p class="muted small">{{ w.original_filename }}</p>
+                  <p v-if="w.link_url" class="muted small widget-link">Ссылка: {{ w.link_url }}</p>
+                  <p class="widget-stats muted small">
+                    Показов: {{ w.stats.impressions }} · Досмотров: {{ w.stats.completed_full_count }} · Кликов:
+                    {{ w.stats.link_clicks }} · Отмен: {{ w.stats.dismissals }}
+                    <template v-if="w.stats.avg_watch_ms != null">
+                      · Ср. просмотр: {{ formatWatchMs(w.stats.avg_watch_ms) }}
+                    </template>
+                  </p>
+                  <div class="widget-card-actions">
+                    <button type="button" class="btn sm secondary" @click="startVideoEdit(a.id, w)">Изменить</button>
+                    <button type="button" class="btn sm danger" @click="deleteVideoWidget(a, w)">Удалить</button>
+                  </div>
+                </template>
               </li>
             </ul>
             <form class="panel-block evform" @submit.prevent="saveVideoWidget(a)">
@@ -556,6 +627,15 @@ const videoForms = ref<Record<number, { name: string; media_id: number; link_url
 const textPending = ref<Record<number, boolean>>({});
 const surveyPending = ref<Record<number, boolean>>({});
 const videoPending = ref<Record<number, boolean>>({});
+const editingTextWidgetIds = ref<Record<number, number | null>>({});
+const editingSurveyWidgetIds = ref<Record<number, number | null>>({});
+const editingVideoWidgetIds = ref<Record<number, number | null>>({});
+const textEditForms = ref<Record<number, { body: string }>>({});
+const surveyEditForms = ref<Record<number, { title: string; description: string }>>({});
+const videoEditForms = ref<Record<number, { link_url: string }>>({});
+const textEditPending = ref<Record<number, boolean>>({});
+const surveyEditPending = ref<Record<number, boolean>>({});
+const videoEditPending = ref<Record<number, boolean>>({});
 
 function appTab(appId: number): AppTabId {
   return appTabs.value[appId] ?? "fairies";
@@ -782,6 +862,107 @@ async function loadVideoWidgets(appId: number) {
     videoWidgets.value[appId] = res.widgets;
   } catch {
     videoWidgets.value[appId] = [];
+  }
+}
+
+function editingTextWidgetId(appId: number): number | null {
+  return editingTextWidgetIds.value[appId] ?? null;
+}
+
+function editingSurveyWidgetId(appId: number): number | null {
+  return editingSurveyWidgetIds.value[appId] ?? null;
+}
+
+function editingVideoWidgetId(appId: number): number | null {
+  return editingVideoWidgetIds.value[appId] ?? null;
+}
+
+function startTextEdit(appId: number, w: TextWidgetRow) {
+  textEditForms.value[w.id] = { body: w.body };
+  editingTextWidgetIds.value[appId] = w.id;
+}
+
+function cancelTextEdit(appId: number) {
+  editingTextWidgetIds.value[appId] = null;
+}
+
+function startSurveyEdit(appId: number, w: SurveyWidgetRow) {
+  surveyEditForms.value[w.id] = {
+    title: w.title,
+    description: w.description || "",
+  };
+  editingSurveyWidgetIds.value[appId] = w.id;
+}
+
+function cancelSurveyEdit(appId: number) {
+  editingSurveyWidgetIds.value[appId] = null;
+}
+
+function startVideoEdit(appId: number, w: VideoWidgetRow) {
+  videoEditForms.value[w.id] = { link_url: w.link_url || "" };
+  editingVideoWidgetIds.value[appId] = w.id;
+}
+
+function cancelVideoEdit(appId: number) {
+  editingVideoWidgetIds.value[appId] = null;
+}
+
+async function updateTextWidget(a: AppRow, w: TextWidgetRow) {
+  const f = textEditForms.value[w.id];
+  if (!f?.body.trim()) return;
+  textEditPending.value[w.id] = true;
+  try {
+    await api(`/api/applications/${a.id}/text-widgets/${w.id}`, {
+      method: "PUT",
+      body: JSON.stringify({ body: f.body.trim() }),
+    });
+    cancelTextEdit(a.id);
+    await loadTextWidgets(a.id);
+    await load();
+  } catch {
+    /* */
+  } finally {
+    textEditPending.value[w.id] = false;
+  }
+}
+
+async function updateSurveyWidget(a: AppRow, w: SurveyWidgetRow) {
+  const f = surveyEditForms.value[w.id];
+  if (!f?.title.trim()) return;
+  surveyEditPending.value[w.id] = true;
+  try {
+    await api(`/api/applications/${a.id}/survey-widgets/${w.id}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        title: f.title.trim(),
+        description: f.description.trim() || undefined,
+      }),
+    });
+    cancelSurveyEdit(a.id);
+    await loadSurveyWidgets(a.id);
+    await load();
+  } catch {
+    /* */
+  } finally {
+    surveyEditPending.value[w.id] = false;
+  }
+}
+
+async function updateVideoWidget(a: AppRow, w: VideoWidgetRow) {
+  const f = videoEditForms.value[w.id];
+  if (!f) return;
+  videoEditPending.value[w.id] = true;
+  try {
+    await api(`/api/applications/${a.id}/video-widgets/${w.id}`, {
+      method: "PUT",
+      body: JSON.stringify({ link_url: f.link_url.trim() }),
+    });
+    cancelVideoEdit(a.id);
+    await loadVideoWidgets(a.id);
+  } catch {
+    /* */
+  } finally {
+    videoEditPending.value[w.id] = false;
   }
 }
 
@@ -1331,6 +1512,27 @@ input {
   border-radius: 8px;
   border: 1px solid #2e3238;
   background: #0f1115;
+}
+.widget-card.editing {
+  border-color: #1a73e8;
+}
+.widget-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.widget-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.widget-edit-form textarea,
+.widget-edit-form input {
+  width: 100%;
+}
+.widget-link {
+  word-break: break-all;
 }
 .widget-preview {
   margin: 6px 0;
