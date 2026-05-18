@@ -14,9 +14,12 @@ export function useApi() {
     if (token) {
       headers.Authorization = `Bearer ${token}`;
     }
+    const body = opts.body;
+    const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
     if (
-      opts.body &&
-      typeof opts.body === "string" &&
+      body &&
+      !isFormData &&
+      typeof body === "string" &&
       !headers["Content-Type"] &&
       !headers["content-type"]
     ) {

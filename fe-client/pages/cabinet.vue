@@ -345,7 +345,6 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { useStore } from "vuex";
 
 definePageMeta({
   middleware: "auth",
@@ -427,7 +426,7 @@ type FailureRow = {
   created_at: string;
 };
 
-const { api, base } = useApi();
+const { api } = useApi();
 
 const actionTypes = ref<ActionTypeRow[]>([
   { code: "text", label: "Текст" },
@@ -629,10 +628,7 @@ async function uploadMedia(a: AppRow) {
   try {
     const fd = new FormData();
     fd.append("file", file);
-    const token = useStore().state.token as string | null;
-    const headers: Record<string, string> = {};
-    if (token) headers.Authorization = `Bearer ${token}`;
-    await $fetch(`${base}/api/applications/${a.id}/media`, { method: "POST", body: fd, headers });
+    await api(`/api/applications/${a.id}/media`, { method: "POST", body: fd });
     mediaFilePick.value[a.id] = null;
     await loadMedia(a.id);
   } catch {
