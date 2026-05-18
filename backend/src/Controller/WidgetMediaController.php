@@ -60,7 +60,30 @@ final class WidgetMediaController
             return Response::json(['error' => 'forbidden'], 403);
         }
         if (!isset($_FILES['file']) || !is_array($_FILES['file'])) {
-            return Response::json(['error' => 'validation', 'message' => 'Поле file обязательно'], 422);
+            $tooLarge = $this->isPostBodyTooLarge();
+
+            return Response::json(
+                [
+                    'error' => 'validation',
+                    'message' => $tooLarge
+                        ? 'Файл слишком большой для сервера (максимум 10 МБ). Уменьшите видео или увеличьте post_max_size/upload_max_filesize в PHP.'
+                        : 'Поле file обязательно',
+                ],
+                $tooLarge ? 413 : 422,
+            );
+        }
+        $uploadErr = (int) ($_FILES['file']['error'] ?? UPLOAD_ERR_NO_FILE);
+        if ($uploadErr === UPLOAD_ERR_INI_SIZE || $uploadErr === UPLOAD_ERR_FORM_SIZE) {
+            return Response::json(
+                ['error' => 'validation', 'message' => 'Файл больше 10 МБ или превышает лимит PHP'],
+                413,
+            );
+        }
+        if ($uploadErr !== UPLOAD_ERR_OK) {
+            return Response::json(
+                ['error' => 'validation', 'message' => 'Ошибка загрузки файла (код ' . $uploadErr . ')'],
+                422,
+            );
         }
         try {
             $meta = $this->mediaStorage->storeUpload($appId, $_FILES['file']);
@@ -233,5 +256,31 @@ final class WidgetMediaController
         $st->execute([$applicationId, $userId]);
 
         return (bool) $st->fetch(PDO::FETCH_ASSOC);
+    }
+
+    private function isPostBodyTooLarge(): bool
+    {
+        $len = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+        if ($len < 1) {
+            return false;
+        }
+
+        return $len > $this->iniSizeBytes(ini_get('post_max_size'));
+    }
+
+    private function iniSizeBytes(string|false $value): int
+    {
+        if ($value === false || $value === '') {
+            return 8 * 1024 * 1024;
+        }
+        $v = trim($value);
+        $unit = strtolower(substr($v, -1));
+        $num = (float) $v;
+        return match ($unit) {
+            'g' => (int) ($num * 1024 * 1024 * 1024),
+            'm' => (int) ($num * 1024 * 1024),
+            'k' => (int) ($num * 1024),
+            default => (int) $num,
+        };
     }
 }

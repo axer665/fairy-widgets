@@ -28,6 +28,7 @@ services:
       APP_URL: ${PUBLIC_BASE_URL:-https://localhost}
     volumes:
       - ./backend:/var/www/html
+      - ./backend/docker-php-uploads.ini:/usr/local/etc/php/conf.d/99-uploads.ini:ro
     depends_on:
       mysql:
         condition: service_healthy
