@@ -214,9 +214,20 @@
     var stars = document.createElement("div");
     stars.style.cssText = "display:flex;gap:4px;";
     var rated = false;
+    var selectedLevel = 0;
+    var starBtns = [];
+    var STAR_OFF = "#c4c7c5";
+    var STAR_ON = "#f4b400";
+    function paintStars(upTo){
+      for (var i = 0; i < starBtns.length; i++) {
+        starBtns[i].style.color = i < upTo ? STAR_ON : STAR_OFF;
+      }
+    }
     function submitRating(n){
       if (rated) return;
       rated = true;
+      selectedLevel = n;
+      paintStars(n);
       postJson("/api/widget/survey-rate", {
         token: TOKEN, execution_id: executionId, session_key: SESSION_KEY,
         rating: n, page_url: pageUrl()
@@ -224,6 +235,9 @@
         ctx.flyAwayThen(executionId, null);
       }).catch(function(){ completeExecution(executionId); });
     }
+    stars.onmouseleave = function(){
+      if (!rated) paintStars(selectedLevel);
+    };
     for (var s = 1; s <= 5; s++) {
       (function(star){
         var btn = document.createElement("button");
@@ -231,10 +245,10 @@
         btn.setAttribute("aria-label", star + " из 5");
         btn.textContent = "\u2605";
         btn.style.cssText =
-          "border:none;background:transparent;cursor:pointer;font-size:22px;line-height:1;padding:0;color:#c4c7c5;";
-        btn.onmouseenter = function(){ btn.style.color = "#f4b400"; };
-        btn.onmouseleave = function(){ if (!rated) btn.style.color = "#c4c7c5"; };
+          "border:none;background:transparent;cursor:pointer;font-size:22px;line-height:1;padding:0;color:" + STAR_OFF + ";";
+        btn.onmouseenter = function(){ if (!rated) paintStars(star); };
         btn.onclick = function(){ submitRating(star); };
+        starBtns.push(btn);
         stars.appendChild(btn);
       })(s);
     }
