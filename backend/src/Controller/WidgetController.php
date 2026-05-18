@@ -641,7 +641,7 @@ final class WidgetController
         string $widgetToken,
         bool $autoStandardWelcome,
     ): string {
-        $path = dirname(__DIR__) . '/resources/widget-runtime.js';
+        $path = dirname(__DIR__, 2) . '/resources/widget-runtime.js';
         if (!is_readable($path)) {
             return 'console.error("widget: runtime missing");';
         }
