@@ -29,6 +29,7 @@ services:
     volumes:
       - ./backend:/var/www/html
       - ./backend/docker-php-uploads.ini:/usr/local/etc/php/conf.d/99-uploads.ini:ro
+      - backend_media:/var/www/html/storage/media
     depends_on:
       mysql:
         condition: service_healthy
@@ -113,3 +114,4 @@ networks:
 volumes:
   mysql_data:
   fe_client_node_modules:
+  backend_media:
