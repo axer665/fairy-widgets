@@ -152,8 +152,6 @@ final class EventAction
             $durationMs = $contentRow['duration_ms'] ?? null;
             if ($durationMs !== null && (int) $durationMs > 0) {
                 $payload['duration_ms'] = (int) $durationMs;
-            } else {
-                $payload['duration_unknown'] = true;
             }
             $leaveMode = (string) ($contentRow['leave_mode'] ?? 'video_end');
             $payload['leave_mode'] = $leaveMode === 'timer' ? 'timer' : 'video_end';

@@ -304,7 +304,6 @@
     var linkUrl = action.video_link_url ? String(action.video_link_url) : "";
     var leaveMode = String(action.leave_mode || "video_end") === "timer" ? "timer" : "video_end";
     var leaveTimerMs = parseInt(action.leave_timer_ms, 10) || 0;
-    var durationUnknown = !!action.duration_unknown;
     var ctx = createFairyHost(spriteOk);
     var panel = document.createElement("div");
     panel.style.cssText =
@@ -317,13 +316,6 @@
     video.playsInline = true;
     video.style.cssText = "width:100%;max-height:120px;border-radius:6px;background:#000;display:block;";
     panel.appendChild(video);
-    if (durationUnknown && leaveMode === "video_end") {
-      var durNote = document.createElement("p");
-      durNote.textContent =
-        "Длительность видео неизвестна. Авто-уход по окончанию ролика может не сработать — закройте вручную или настройте таймер в кабинете.";
-      durNote.style.cssText = "margin:8px 0 0;font-size:11px;line-height:1.35;color:#fdd663;";
-      panel.appendChild(durNote);
-    }
     var row = document.createElement("div");
     row.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;";
     if (linkUrl) {

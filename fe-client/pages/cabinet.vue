@@ -439,6 +439,16 @@
                         required
                       />
                     </label>
+                    <p
+                      v-if="
+                        isVideoDurationUnknown(w.duration_ms) &&
+                        videoEditForms[w.id].leave_mode === 'video_end'
+                      "
+                      class="cabinet-notice"
+                      role="status"
+                    >
+                      {{ VIDEO_DURATION_UNKNOWN_HINT }}
+                    </p>
                     <div class="widget-card-actions">
                       <button type="submit" class="btn primary sm" :disabled="videoEditPending[w.id]">Сохранить</button>
                       <button type="button" class="btn sm secondary" @click="cancelVideoEdit(a.id)">Отмена</button>
@@ -456,6 +466,13 @@
                         ? "таймер " + msToSec(w.leave_timer_ms) + " с"
                         : "после видео"
                     }}
+                  </p>
+                  <p
+                    v-if="isVideoDurationUnknown(w.duration_ms) && w.leave_mode === 'video_end'"
+                    class="cabinet-notice"
+                    role="status"
+                  >
+                    {{ VIDEO_DURATION_UNKNOWN_HINT }}
                   </p>
                   <p v-if="w.link_url" class="muted small widget-link">Ссылка: {{ w.link_url }}</p>
                   <p class="widget-stats muted small">
@@ -495,9 +512,20 @@
                   {{
                     videoCreateDurationMs[a.id]
                       ? formatDurationMs(videoCreateDurationMs[a.id])
-                      : "не удалось определить (будет предупреждение в виджете)"
+                      : "неизвестна"
                   }}
                 </template>
+              </p>
+              <p
+                v-if="
+                  videoCreateFile[a.id] &&
+                  videoCreateDurationMs[a.id] === null &&
+                  videoForms[a.id].leave_mode === 'video_end'
+                "
+                class="cabinet-notice"
+                role="status"
+              >
+                {{ VIDEO_DURATION_UNKNOWN_HINT }}
               </p>
               <input v-model="videoForms[a.id].link_url" type="url" placeholder="Ссылка «Подробнее» (необязательно)" />
               <fieldset class="leave-mode-fieldset">
@@ -800,8 +828,15 @@ function msToSec(ms: number | null | undefined): number {
   return Math.round(ms / 1000);
 }
 
+const VIDEO_DURATION_UNKNOWN_HINT =
+  "Не удалось определить длительность видео. При режиме «После окончания видео» фея может не улететь автоматически — выберите «По таймеру».";
+
+function isVideoDurationUnknown(ms: number | null | undefined): boolean {
+  return !ms || ms < 1;
+}
+
 function formatDurationMs(ms: number | null | undefined): string {
-  if (!ms || ms < 1) return "неизвестна";
+  if (isVideoDurationUnknown(ms)) return "неизвестна";
   const total = Math.round(ms / 1000);
   const m = Math.floor(total / 60);
   const s = total % 60;
@@ -1664,6 +1699,16 @@ input {
 .radio-row input {
   width: auto;
   margin: 0;
+}
+.cabinet-notice {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(244, 180, 0, 0.12);
+  border: 1px solid rgba(244, 180, 0, 0.45);
+  color: #fdd663;
+  font-size: 0.85rem;
+  line-height: 1.4;
 }
 .media-list.compact .media-item {
   padding: 8px 0;
