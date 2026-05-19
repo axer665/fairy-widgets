@@ -790,7 +790,8 @@ final class WidgetController
                 return null;
             }
             $st = $pdo->prepare(
-                'SELECT title, description FROM widget_survey_widgets WHERE id = ? AND application_id = ? LIMIT 1',
+                'SELECT title, description, dismiss_after_ms FROM widget_survey_widgets
+                 WHERE id = ? AND application_id = ? LIMIT 1',
             );
             $st->execute([$id, $appId]);
             $row = $st->fetch(PDO::FETCH_ASSOC);
@@ -798,6 +799,7 @@ final class WidgetController
             return $row ? [
                 'title' => (string) $row['title'],
                 'description' => $row['description'],
+                'dismiss_after_ms' => $row['dismiss_after_ms'],
             ] : null;
         }
         if ($type === EventAction::TYPE_VIDEO) {
@@ -806,7 +808,10 @@ final class WidgetController
                 return null;
             }
             $st = $pdo->prepare(
-                'SELECT media_id, link_url FROM widget_video_widgets WHERE id = ? AND application_id = ? LIMIT 1',
+                'SELECT vw.media_id, vw.link_url, vw.leave_mode, vw.leave_timer_ms, ma.duration_ms
+                 FROM widget_video_widgets vw
+                 INNER JOIN widget_media_assets ma ON ma.id = vw.media_id
+                 WHERE vw.id = ? AND vw.application_id = ? LIMIT 1',
             );
             $st->execute([$id, $appId]);
             $row = $st->fetch(PDO::FETCH_ASSOC);
@@ -814,6 +819,9 @@ final class WidgetController
             return $row ? [
                 'media_id' => (int) $row['media_id'],
                 'link_url' => $row['link_url'],
+                'leave_mode' => (string) ($row['leave_mode'] ?? 'video_end'),
+                'leave_timer_ms' => $row['leave_timer_ms'],
+                'duration_ms' => $row['duration_ms'],
             ] : null;
         }
 
@@ -873,7 +881,7 @@ final class WidgetController
             '{{API}}' => addslashes($apiBase),
             '{{TOKEN}}' => addslashes($widgetToken),
             '{{AUTO_STANDARD}}' => $autoStandardWelcome ? 'true' : 'false',
-            '{{VERSION}}' => '10',
+            '{{VERSION}}' => '11',
         ];
 
         return str_replace(array_keys($replacements), array_values($replacements), $js);

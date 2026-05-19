@@ -6,6 +6,7 @@ namespace App\Controller;
 
 use App\Database;
 use App\EventAction;
+use App\WidgetTiming;
 use App\Http\Request;
 use App\Http\Response;
 use PDO;
@@ -86,7 +87,7 @@ final class WidgetContentController
             return $appId;
         }
         $st = $this->db->pdo()->prepare(
-            'SELECT sw.id, sw.name, sw.title, sw.description, sw.created_at, sw.updated_at,
+            'SELECT sw.id, sw.name, sw.title, sw.description, sw.dismiss_after_ms, sw.created_at, sw.updated_at,
                     (SELECT COUNT(*) FROM widget_survey_impressions i WHERE i.survey_widget_id = sw.id) AS impressions,
                     (SELECT COUNT(*) FROM widget_survey_ratings r WHERE r.survey_widget_id = sw.id) AS ratings_count,
                     (SELECT ROUND(AVG(r.rating), 2) FROM widget_survey_ratings r WHERE r.survey_widget_id = sw.id) AS avg_rating,
@@ -111,8 +112,15 @@ final class WidgetContentController
             return Response::json(['error' => 'validation', 'message' => 'name и title обязательны'], 422);
         }
         $this->db->pdo()->prepare(
-            'INSERT INTO widget_survey_widgets (application_id, name, title, description) VALUES (?,?,?,?)',
-        )->execute([$appId, $parsed['name'], $parsed['title'], $parsed['description']]);
+            'INSERT INTO widget_survey_widgets (application_id, name, title, description, dismiss_after_ms)
+             VALUES (?,?,?,?,?)',
+        )->execute([
+            $appId,
+            $parsed['name'],
+            $parsed['title'],
+            $parsed['description'],
+            $parsed['dismiss_after_ms'],
+        ]);
 
         return Response::json(['ok' => true, 'id' => (int) $this->db->pdo()->lastInsertId()], 201);
     }
@@ -135,9 +143,9 @@ final class WidgetContentController
             );
         }
         $this->db->pdo()->prepare(
-            'UPDATE widget_survey_widgets SET title = ?, description = ?,
+            'UPDATE widget_survey_widgets SET title = ?, description = ?, dismiss_after_ms = ?,
              updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        )->execute([$parsed['title'], $parsed['description'], $wid]);
+        )->execute([$parsed['title'], $parsed['description'], $parsed['dismiss_after_ms'], $wid]);
 
         return Response::json(['ok' => true]);
     }
@@ -154,8 +162,9 @@ final class WidgetContentController
             return $appId;
         }
         $st = $this->db->pdo()->prepare(
-            'SELECT vw.id, vw.name, vw.media_id, vw.link_url, vw.created_at, vw.updated_at,
-                    ma.original_filename, ma.mime_type, ma.size_bytes,
+            'SELECT vw.id, vw.name, vw.media_id, vw.link_url, vw.leave_mode, vw.leave_timer_ms,
+                    vw.created_at, vw.updated_at,
+                    ma.original_filename, ma.mime_type, ma.size_bytes, ma.duration_ms,
                     (SELECT COUNT(*) FROM widget_video_impressions i WHERE i.video_widget_id = vw.id) AS impressions,
                     (SELECT COUNT(*) FROM widget_video_sessions vs WHERE vs.video_widget_id = vw.id AND vs.completed_full = 1) AS completed_full_count,
                     (SELECT COUNT(*) FROM widget_video_sessions vs WHERE vs.video_widget_id = vw.id AND vs.link_clicked = 1) AS link_clicks,
@@ -190,8 +199,16 @@ final class WidgetContentController
             return Response::json(['error' => 'validation', 'message' => 'Видеофайл не найден'], 422);
         }
         $this->db->pdo()->prepare(
-            'INSERT INTO widget_video_widgets (application_id, name, media_id, link_url) VALUES (?,?,?,?)',
-        )->execute([$appId, $parsed['name'], $parsed['media_id'], $parsed['link_url']]);
+            'INSERT INTO widget_video_widgets (application_id, name, media_id, link_url, leave_mode, leave_timer_ms)
+             VALUES (?,?,?,?,?,?)',
+        )->execute([
+            $appId,
+            $parsed['name'],
+            $parsed['media_id'],
+            $parsed['link_url'],
+            $parsed['leave_mode'],
+            $parsed['leave_timer_ms'],
+        ]);
 
         return Response::json(['ok' => true, 'id' => (int) $this->db->pdo()->lastInsertId()], 201);
     }
@@ -206,16 +223,20 @@ final class WidgetContentController
         if (!$this->videoWidgetOwned($appId, $wid)) {
             return Response::json(['error' => 'not_found'], 404);
         }
-        $parsed = $this->parseVideoLinkUpdate($request);
+        $parsed = $this->parseVideoUpdate($request);
         if ($parsed === null) {
             return Response::json(
-                ['error' => 'validation', 'message' => 'link_url: https-ссылка или пусто'],
+                [
+                    'error' => 'validation',
+                    'message' => 'link_url: https или пусто; leave_mode: video_end|timer; для timer — leave_timer_sec 1–86400',
+                ],
                 422,
             );
         }
         $this->db->pdo()->prepare(
-            'UPDATE widget_video_widgets SET link_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        )->execute([$parsed['link_url'], $wid]);
+            'UPDATE widget_video_widgets SET link_url = ?, leave_mode = ?, leave_timer_ms = ?,
+             updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        )->execute([$parsed['link_url'], $parsed['leave_mode'], $parsed['leave_timer_ms'], $wid]);
 
         return Response::json(['ok' => true]);
     }
@@ -276,6 +297,8 @@ final class WidgetContentController
             } elseif ($kind === 'survey') {
                 $row['title'] = (string) $r['title'];
                 $row['description'] = $r['description'] !== null ? (string) $r['description'] : null;
+                $row['dismiss_after_ms'] = isset($r['dismiss_after_ms']) && $r['dismiss_after_ms'] !== null
+                    ? (int) $r['dismiss_after_ms'] : null;
                 $row['stats']['ratings_count'] = (int) ($r['ratings_count'] ?? 0);
                 $row['stats']['avg_rating'] = $r['avg_rating'] !== null ? (float) $r['avg_rating'] : null;
                 $row['stats']['cancellations'] = (int) ($r['cancellations'] ?? 0);
@@ -299,6 +322,10 @@ final class WidgetContentController
             'name' => (string) $r['name'],
             'media_id' => $mediaId,
             'link_url' => $r['link_url'] !== null && $r['link_url'] !== '' ? (string) $r['link_url'] : null,
+            'leave_mode' => (string) ($r['leave_mode'] ?? WidgetTiming::VIDEO_LEAVE_VIDEO_END),
+            'leave_timer_ms' => isset($r['leave_timer_ms']) && $r['leave_timer_ms'] !== null
+                ? (int) $r['leave_timer_ms'] : null,
+            'duration_ms' => isset($r['duration_ms']) && $r['duration_ms'] !== null ? (int) $r['duration_ms'] : null,
             'original_filename' => (string) $r['original_filename'],
             'mime_type' => (string) $r['mime_type'],
             'size_bytes' => (int) $r['size_bytes'],
@@ -331,7 +358,14 @@ final class WidgetContentController
         return ['name' => $name, 'body' => $body];
     }
 
-    /** @return array{name: string, title: string, description: ?string}|null */
+    /**
+     * @return array{
+     *   name: string,
+     *   title: string,
+     *   description: ?string,
+     *   dismiss_after_ms: ?int
+     * }|null
+     */
     private function parseSurveyBody(Request $request): ?array
     {
         $b = $request->body;
@@ -352,6 +386,7 @@ final class WidgetContentController
             'name' => $name,
             'title' => $title,
             'description' => $desc !== '' ? $desc : null,
+            'dismiss_after_ms' => WidgetTiming::parseDismissAfterMs($b),
         ];
     }
 
@@ -370,7 +405,9 @@ final class WidgetContentController
         return ['body' => $body];
     }
 
-    /** @return array{title: string, description: ?string}|null */
+    /**
+     * @return array{title: string, description: ?string, dismiss_after_ms: ?int}|null
+     */
     private function parseSurveyUpdate(Request $request): ?array
     {
         $b = $request->body;
@@ -389,28 +426,48 @@ final class WidgetContentController
         return [
             'title' => $title,
             'description' => $desc !== '' ? $desc : null,
+            'dismiss_after_ms' => WidgetTiming::parseDismissAfterMs($b),
         ];
     }
 
-    /** @return array{link_url: ?string}|null */
-    private function parseVideoLinkUpdate(Request $request): ?array
+    /**
+     * @return array{
+     *   link_url: ?string,
+     *   leave_mode: string,
+     *   leave_timer_ms: ?int
+     * }|null
+     */
+    private function parseVideoUpdate(Request $request): ?array
     {
         $b = $request->body;
         if (!is_array($b)) {
-            return null;
-        }
-        if (!array_key_exists('link_url', $b)) {
             return null;
         }
         $link = trim((string) ($b['link_url'] ?? ''));
         if ($link !== '' && !EventAction::isValidHttpUrl($link)) {
             return null;
         }
+        $leave = WidgetTiming::parseVideoLeave($b);
+        if ($leave === null) {
+            return null;
+        }
 
-        return ['link_url' => $link !== '' ? $link : null];
+        return [
+            'link_url' => $link !== '' ? $link : null,
+            'leave_mode' => $leave['leave_mode'],
+            'leave_timer_ms' => $leave['leave_timer_ms'],
+        ];
     }
 
-    /** @return array{name: string, media_id: int, link_url: ?string}|null */
+    /**
+     * @return array{
+     *   name: string,
+     *   media_id: int,
+     *   link_url: ?string,
+     *   leave_mode: string,
+     *   leave_timer_ms: ?int
+     * }|null
+     */
     private function parseVideoBody(Request $request): ?array
     {
         $b = $request->body;
@@ -426,11 +483,17 @@ final class WidgetContentController
         if ($link !== '' && !EventAction::isValidHttpUrl($link)) {
             return null;
         }
+        $leave = WidgetTiming::parseVideoLeave($b);
+        if ($leave === null) {
+            return null;
+        }
 
         return [
             'name' => $name,
             'media_id' => $mediaId,
             'link_url' => $link !== '' ? $link : null,
+            'leave_mode' => $leave['leave_mode'],
+            'leave_timer_ms' => $leave['leave_timer_ms'],
         ];
     }
 

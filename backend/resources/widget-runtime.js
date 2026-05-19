@@ -221,10 +221,22 @@
     var stars = document.createElement("div");
     stars.style.cssText = "display:flex;gap:4px;";
     var rated = false;
+    var cancelled = false;
     var selectedLevel = 0;
     var starBtns = [];
+    var surveyTimer = null;
+    var dismissMs = parseInt(action.dismiss_after_ms, 10) || 0;
     var STAR_OFF = "#c4c7c5";
     var STAR_ON = "#f4b400";
+    function autoDismissSurvey(){
+      if (cancelled || rated) return;
+      cancelled = true;
+      if (surveyTimer) { clearTimeout(surveyTimer); surveyTimer = null; }
+      postJson("/api/widget/survey-dismiss", {
+        token: TOKEN, execution_id: executionId, session_key: SESSION_KEY
+      }).catch(function(){});
+      ctx.flyAwayThen(executionId, null);
+    }
     function paintStars(upTo){
       for (var i = 0; i < starBtns.length; i++) {
         starBtns[i].style.color = i < upTo ? STAR_ON : STAR_OFF;
@@ -233,6 +245,7 @@
     function submitRating(n){
       if (rated) return;
       rated = true;
+      if (surveyTimer) { clearTimeout(surveyTimer); surveyTimer = null; }
       selectedLevel = n;
       paintStars(n);
       postJson("/api/widget/survey-rate", {
@@ -266,14 +279,9 @@
     cancelBtn.style.cssText =
       "display:block;width:100%;margin-top:10px;padding:6px 8px;border:1px solid #dadce0;border-radius:6px;" +
       "background:transparent;color:#5f6368;font-size:12px;cursor:pointer;";
-    var cancelled = false;
     function cancelSurvey(){
       if (cancelled || rated) return;
-      cancelled = true;
-      postJson("/api/widget/survey-dismiss", {
-        token: TOKEN, execution_id: executionId, session_key: SESSION_KEY
-      }).catch(function(){});
-      ctx.flyAwayThen(executionId, null);
+      autoDismissSurvey();
     }
     cancelBtn.onclick = cancelSurvey;
     panel.appendChild(cancelBtn);
@@ -285,6 +293,7 @@
       ctx.setHostXY(resolveLandXY(landPos).x, resolveLandXY(landPos).y, true);
       setTimeout(function(){
         panel.style.opacity = "1"; panel.style.transform = "translateY(0)";
+        if (dismissMs > 0) surveyTimer = setTimeout(autoDismissSurvey, dismissMs);
       }, FLY_MS);
     }, introMs || 0);
   }
@@ -293,6 +302,9 @@
     var videoUrl = String(action.video_url || "");
     if (!videoUrl) { completeExecution(executionId); return; }
     var linkUrl = action.video_link_url ? String(action.video_link_url) : "";
+    var leaveMode = String(action.leave_mode || "video_end") === "timer" ? "timer" : "video_end";
+    var leaveTimerMs = parseInt(action.leave_timer_ms, 10) || 0;
+    var durationUnknown = !!action.duration_unknown;
     var ctx = createFairyHost(spriteOk);
     var panel = document.createElement("div");
     panel.style.cssText =
@@ -305,6 +317,13 @@
     video.playsInline = true;
     video.style.cssText = "width:100%;max-height:120px;border-radius:6px;background:#000;display:block;";
     panel.appendChild(video);
+    if (durationUnknown && leaveMode === "video_end") {
+      var durNote = document.createElement("p");
+      durNote.textContent =
+        "Длительность видео неизвестна. Авто-уход по окончанию ролика может не сработать — закройте вручную или настройте таймер в кабинете.";
+      durNote.style.cssText = "margin:8px 0 0;font-size:11px;line-height:1.35;color:#fdd663;";
+      panel.appendChild(durNote);
+    }
     var row = document.createElement("div");
     row.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;";
     if (linkUrl) {
@@ -330,6 +349,7 @@
       "flex:1;padding:6px 8px;border:1px solid #555;border-radius:6px;background:transparent;color:#ddd;" +
       "font-size:12px;cursor:pointer;";
     var dismissed = false;
+    var leaveTimer = null;
     var lastProgressAt = 0;
     function sendVideoProgress(completedFull){
       postJson("/api/widget/video-progress", {
@@ -345,10 +365,14 @@
       lastProgressAt = now;
       sendVideoProgress(false);
     });
-    video.addEventListener("ended", function(){ sendVideoProgress(true); });
+    video.addEventListener("ended", function(){
+      sendVideoProgress(true);
+      if (leaveMode === "video_end") dismiss();
+    });
     function dismiss(){
       if (dismissed) return;
       dismissed = true;
+      if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = null; }
       try { video.pause(); } catch(e){}
       sendVideoProgress(false);
       postJson("/api/widget/video-dismiss", {
@@ -368,6 +392,9 @@
       setTimeout(function(){
         panel.style.opacity = "1"; panel.style.transform = "translateY(0)";
         try { video.play().catch(function(){}); } catch(e){}
+        if (leaveMode === "timer" && leaveTimerMs > 0) {
+          leaveTimer = setTimeout(dismiss, leaveTimerMs);
+        }
       }, FLY_MS);
     }, introMs || 0);
   }

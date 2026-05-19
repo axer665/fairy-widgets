@@ -133,6 +133,10 @@ final class EventAction
             if ($desc !== null && (string) $desc !== '') {
                 $payload['survey_description'] = (string) $desc;
             }
+            $dismissMs = $contentRow['dismiss_after_ms'] ?? null;
+            if ($dismissMs !== null && (int) $dismissMs > 0) {
+                $payload['dismiss_after_ms'] = (int) $dismissMs;
+            }
 
             return $payload;
         }
@@ -144,6 +148,18 @@ final class EventAction
             $link = $contentRow['link_url'] ?? null;
             if ($link !== null && (string) $link !== '') {
                 $payload['video_link_url'] = (string) $link;
+            }
+            $durationMs = $contentRow['duration_ms'] ?? null;
+            if ($durationMs !== null && (int) $durationMs > 0) {
+                $payload['duration_ms'] = (int) $durationMs;
+            } else {
+                $payload['duration_unknown'] = true;
+            }
+            $leaveMode = (string) ($contentRow['leave_mode'] ?? 'video_end');
+            $payload['leave_mode'] = $leaveMode === 'timer' ? 'timer' : 'video_end';
+            $leaveTimerMs = $contentRow['leave_timer_ms'] ?? null;
+            if ($payload['leave_mode'] === 'timer' && $leaveTimerMs !== null && (int) $leaveTimerMs > 0) {
+                $payload['leave_timer_ms'] = (int) $leaveTimerMs;
             }
 
             return $payload;

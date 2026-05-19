@@ -344,6 +344,17 @@
                       rows="2"
                       maxlength="2000"
                     />
+                    <label class="ev-field">
+                      Авто-уход феи через (сек)
+                      <input
+                        v-model.number="surveyEditForms[w.id].dismiss_after_sec"
+                        type="number"
+                        min="0"
+                        max="86400"
+                        placeholder="0 — не улетать по таймеру"
+                      />
+                    </label>
+                    <p class="muted small ev-form-hint">0 — только после оценки или «Отмена»</p>
                     <div class="widget-card-actions">
                       <button type="submit" class="btn primary sm" :disabled="surveyEditPending[w.id]">Сохранить</button>
                       <button type="button" class="btn sm secondary" @click="cancelSurveyEdit(a.id)">Отмена</button>
@@ -354,6 +365,9 @@
                   <strong>{{ w.name }}</strong>
                   <p class="widget-preview">{{ w.title }}</p>
                   <p v-if="w.description" class="muted small">{{ w.description }}</p>
+                  <p v-if="w.dismiss_after_ms" class="muted small">
+                    Авто-уход через {{ msToSec(w.dismiss_after_ms) }} с
+                  </p>
                   <p class="widget-stats muted small">
                     Показов: {{ w.stats.impressions }} · Оценок: {{ w.stats.ratings_count }}
                     <template v-if="w.stats.avg_rating != null"> · Средняя: {{ w.stats.avg_rating }}</template>
@@ -371,6 +385,17 @@
               <input v-model="surveyForms[a.id].name" placeholder="Название" maxlength="128" required />
               <input v-model="surveyForms[a.id].title" placeholder="Заголовок опроса" maxlength="512" required />
               <textarea v-model="surveyForms[a.id].description" placeholder="Описание (необязательно)" rows="2" />
+              <label class="ev-field">
+                Авто-уход феи через (сек)
+                <input
+                  v-model.number="surveyForms[a.id].dismiss_after_sec"
+                  type="number"
+                  min="0"
+                  max="86400"
+                  placeholder="0 — не улетать по таймеру"
+                />
+              </label>
+              <p class="muted small ev-form-hint">0 — только после оценки или «Отмена»</p>
               <button type="submit" class="btn primary sm" :disabled="surveyPending[a.id]">Добавить</button>
             </form>
           </div>
@@ -393,6 +418,27 @@
                       type="url"
                       placeholder="Ссылка «Подробнее» (оставьте пустым, чтобы убрать)"
                     />
+                    <fieldset class="leave-mode-fieldset">
+                      <legend class="muted small">Когда фея улетает</legend>
+                      <label class="radio-row">
+                        <input v-model="videoEditForms[w.id].leave_mode" type="radio" value="video_end" />
+                        После окончания видео
+                      </label>
+                      <label class="radio-row">
+                        <input v-model="videoEditForms[w.id].leave_mode" type="radio" value="timer" />
+                        По таймеру
+                      </label>
+                    </fieldset>
+                    <label v-if="videoEditForms[w.id].leave_mode === 'timer'" class="ev-field">
+                      Таймер (сек)
+                      <input
+                        v-model.number="videoEditForms[w.id].leave_timer_sec"
+                        type="number"
+                        min="1"
+                        max="86400"
+                        required
+                      />
+                    </label>
                     <div class="widget-card-actions">
                       <button type="submit" class="btn primary sm" :disabled="videoEditPending[w.id]">Сохранить</button>
                       <button type="button" class="btn sm secondary" @click="cancelVideoEdit(a.id)">Отмена</button>
@@ -402,6 +448,15 @@
                 <template v-else>
                   <strong>{{ w.name }}</strong>
                   <p class="muted small">{{ w.original_filename }}</p>
+                  <p class="muted small">
+                    Длительность: {{ formatDurationMs(w.duration_ms) }}
+                    · Уход:
+                    {{
+                      w.leave_mode === "timer" && w.leave_timer_ms
+                        ? "таймер " + msToSec(w.leave_timer_ms) + " с"
+                        : "после видео"
+                    }}
+                  </p>
                   <p v-if="w.link_url" class="muted small widget-link">Ссылка: {{ w.link_url }}</p>
                   <p class="widget-stats muted small">
                     Показов: {{ w.stats.impressions }} · Досмотров: {{ w.stats.completed_full_count }} · Кликов:
@@ -435,8 +490,37 @@
               </label>
               <p v-if="videoCreateFile[a.id]" class="muted small">
                 {{ videoCreateFile[a.id]!.name }} ({{ formatBytes(videoCreateFile[a.id]!.size) }})
+                <template v-if="videoCreateDurationMs[a.id] !== undefined">
+                  · длительность:
+                  {{
+                    videoCreateDurationMs[a.id]
+                      ? formatDurationMs(videoCreateDurationMs[a.id])
+                      : "не удалось определить (будет предупреждение в виджете)"
+                  }}
+                </template>
               </p>
               <input v-model="videoForms[a.id].link_url" type="url" placeholder="Ссылка «Подробнее» (необязательно)" />
+              <fieldset class="leave-mode-fieldset">
+                <legend class="muted small">Когда фея улетает</legend>
+                <label class="radio-row">
+                  <input v-model="videoForms[a.id].leave_mode" type="radio" value="video_end" />
+                  После окончания видео
+                </label>
+                <label class="radio-row">
+                  <input v-model="videoForms[a.id].leave_mode" type="radio" value="timer" />
+                  По таймеру
+                </label>
+              </fieldset>
+              <label v-if="videoForms[a.id].leave_mode === 'timer'" class="ev-field">
+                Таймер (сек)
+                <input
+                  v-model.number="videoForms[a.id].leave_timer_sec"
+                  type="number"
+                  min="1"
+                  max="86400"
+                  required
+                />
+              </label>
               <button
                 type="submit"
                 class="btn primary sm"
@@ -504,6 +588,7 @@ type SurveyWidgetRow = {
   name: string;
   title: string;
   description: string | null;
+  dismiss_after_ms: number | null;
   stats: {
     impressions: number;
     ratings_count: number;
@@ -512,11 +597,16 @@ type SurveyWidgetRow = {
   };
 };
 
+type VideoLeaveMode = "video_end" | "timer";
+
 type VideoWidgetRow = {
   id: number;
   name: string;
   media_id: number;
   link_url: string | null;
+  leave_mode: VideoLeaveMode;
+  leave_timer_ms: number | null;
+  duration_ms: number | null;
   original_filename: string;
   stats: {
     impressions: number;
@@ -610,9 +700,10 @@ const textWidgets = ref<Record<number, TextWidgetRow[]>>({});
 const surveyWidgets = ref<Record<number, SurveyWidgetRow[]>>({});
 const videoWidgets = ref<Record<number, VideoWidgetRow[]>>({});
 const textForms = ref<Record<number, { name: string; body: string }>>({});
-const surveyForms = ref<Record<number, { name: string; title: string; description: string }>>({});
-const videoForms = ref<Record<number, { name: string; link_url: string }>>({});
+const surveyForms = ref<Record<number, { name: string; title: string; description: string; dismiss_after_sec: number }>>({});
+const videoForms = ref<Record<number, { name: string; link_url: string; leave_mode: VideoLeaveMode; leave_timer_sec: number }>>({});
 const videoCreateFile = ref<Record<number, File | null>>({});
+const videoCreateDurationMs = ref<Record<number, number | null | undefined>>({});
 const videoFormResetKey = ref<Record<number, number>>({});
 const textPending = ref<Record<number, boolean>>({});
 const surveyPending = ref<Record<number, boolean>>({});
@@ -621,8 +712,8 @@ const editingTextWidgetIds = ref<Record<number, number | null>>({});
 const editingSurveyWidgetIds = ref<Record<number, number | null>>({});
 const editingVideoWidgetIds = ref<Record<number, number | null>>({});
 const textEditForms = ref<Record<number, { body: string }>>({});
-const surveyEditForms = ref<Record<number, { title: string; description: string }>>({});
-const videoEditForms = ref<Record<number, { link_url: string }>>({});
+const surveyEditForms = ref<Record<number, { title: string; description: string; dismiss_after_sec: number }>>({});
+const videoEditForms = ref<Record<number, { link_url: string; leave_mode: VideoLeaveMode; leave_timer_sec: number }>>({});
 const textEditPending = ref<Record<number, boolean>>({});
 const surveyEditPending = ref<Record<number, boolean>>({});
 const videoEditPending = ref<Record<number, boolean>>({});
@@ -669,11 +760,11 @@ function defaultTextForm() {
 }
 
 function defaultSurveyForm() {
-  return { name: "", title: "", description: "" };
+  return { name: "", title: "", description: "", dismiss_after_sec: 0 };
 }
 
 function defaultVideoForm() {
-  return { name: "", link_url: "" };
+  return { name: "", link_url: "", leave_mode: "video_end" as VideoLeaveMode, leave_timer_sec: 30 };
 }
 
 function ensureWidgetForms(appId: number) {
@@ -704,6 +795,39 @@ function formatWatchMs(ms: number): string {
   return Math.floor(s / 60) + " мин " + (s % 60) + " с";
 }
 
+function msToSec(ms: number | null | undefined): number {
+  if (!ms || ms < 1) return 0;
+  return Math.round(ms / 1000);
+}
+
+function formatDurationMs(ms: number | null | undefined): string {
+  if (!ms || ms < 1) return "неизвестна";
+  const total = Math.round(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  if (m > 0) return m + ":" + String(s).padStart(2, "0");
+  return s + " с";
+}
+
+function readVideoDuration(file: File): Promise<number | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      const d = video.duration;
+      resolve(Number.isFinite(d) && d > 0 ? Math.round(d * 1000) : null);
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(null);
+    };
+    video.src = url;
+  });
+}
+
+
 function eventPreviewText(e: WidgetEventRow): string {
   const label = e.widget_name ? e.widget_name + ": " : "";
   if (e.action_type === "survey") return label + (e.survey_title || "");
@@ -717,9 +841,14 @@ function formatBytes(n: number): string {
   return (n / (1024 * 1024)).toFixed(1) + " MB";
 }
 
-function onVideoCreateFilePick(appId: number, ev: Event) {
+async function onVideoCreateFilePick(appId: number, ev: Event) {
   const input = ev.target as HTMLInputElement;
-  videoCreateFile.value[appId] = input.files?.[0] ?? null;
+  const file = input.files?.[0] ?? null;
+  videoCreateFile.value[appId] = file;
+  videoCreateDurationMs.value[appId] = undefined;
+  if (file) {
+    videoCreateDurationMs.value[appId] = await readVideoDuration(file);
+  }
 }
 
 function editingEventId(appId: number): number | null {
@@ -878,6 +1007,7 @@ function startSurveyEdit(appId: number, w: SurveyWidgetRow) {
   surveyEditForms.value[w.id] = {
     title: w.title,
     description: w.description || "",
+    dismiss_after_sec: msToSec(w.dismiss_after_ms),
   };
   editingSurveyWidgetIds.value[appId] = w.id;
 }
@@ -887,7 +1017,11 @@ function cancelSurveyEdit(appId: number) {
 }
 
 function startVideoEdit(appId: number, w: VideoWidgetRow) {
-  videoEditForms.value[w.id] = { link_url: w.link_url || "" };
+  videoEditForms.value[w.id] = {
+    link_url: w.link_url || "",
+    leave_mode: w.leave_mode || "video_end",
+    leave_timer_sec: msToSec(w.leave_timer_ms) || 30,
+  };
   editingVideoWidgetIds.value[appId] = w.id;
 }
 
@@ -924,6 +1058,7 @@ async function updateSurveyWidget(a: AppRow, w: SurveyWidgetRow) {
       body: JSON.stringify({
         title: f.title.trim(),
         description: f.description.trim() || undefined,
+        dismiss_after_sec: f.dismiss_after_sec > 0 ? f.dismiss_after_sec : 0,
       }),
     });
     cancelSurveyEdit(a.id);
@@ -943,7 +1078,11 @@ async function updateVideoWidget(a: AppRow, w: VideoWidgetRow) {
   try {
     await api(`/api/applications/${a.id}/video-widgets/${w.id}`, {
       method: "PUT",
-      body: JSON.stringify({ link_url: f.link_url.trim() }),
+      body: JSON.stringify({
+        link_url: f.link_url.trim(),
+        leave_mode: f.leave_mode,
+        leave_timer_sec: f.leave_mode === "timer" ? f.leave_timer_sec : 0,
+      }),
     });
     cancelVideoEdit(a.id);
     await loadVideoWidgets(a.id);
@@ -985,6 +1124,7 @@ async function saveSurveyWidget(a: AppRow) {
         name: f.name.trim(),
         title: f.title.trim(),
         description: f.description.trim() || undefined,
+        dismiss_after_sec: f.dismiss_after_sec > 0 ? f.dismiss_after_sec : 0,
       }),
     });
     surveyForms.value[a.id] = defaultSurveyForm();
@@ -1001,6 +1141,7 @@ async function saveVideoWidget(a: AppRow) {
   const f = videoForms.value[a.id];
   const file = videoCreateFile.value[a.id];
   if (!f.name.trim() || !file) return;
+  if (f.leave_mode === "timer" && f.leave_timer_sec < 1) return;
   if (file.size > 10 * 1024 * 1024) {
     alert("Файл больше 10 МБ");
     return;
@@ -1009,6 +1150,8 @@ async function saveVideoWidget(a: AppRow) {
   try {
     const fd = new FormData();
     fd.append("file", file);
+    const dur = videoCreateDurationMs.value[a.id];
+    if (dur && dur > 0) fd.append("duration_ms", String(dur));
     const uploaded = await api<{ id: number }>(`/api/applications/${a.id}/media`, {
       method: "POST",
       body: fd,
@@ -1019,10 +1162,13 @@ async function saveVideoWidget(a: AppRow) {
         name: f.name.trim(),
         media_id: uploaded.id,
         link_url: f.link_url.trim() || undefined,
+        leave_mode: f.leave_mode,
+        leave_timer_sec: f.leave_mode === "timer" ? f.leave_timer_sec : 0,
       }),
     });
     videoForms.value[a.id] = defaultVideoForm();
     videoCreateFile.value[a.id] = null;
+    delete videoCreateDurationMs.value[a.id];
     videoFormResetKey.value[a.id] = (videoFormResetKey.value[a.id] ?? 0) + 1;
     await loadVideoWidgets(a.id);
   } catch {
@@ -1497,6 +1643,27 @@ input {
 }
 .widget-stats {
   margin: 4px 0 8px;
+}
+.leave-mode-fieldset {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #3c4043;
+  border-radius: 8px;
+}
+.leave-mode-fieldset legend {
+  padding: 0 4px;
+}
+.radio-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+.radio-row input {
+  width: auto;
+  margin: 0;
 }
 .media-list.compact .media-item {
   padding: 8px 0;

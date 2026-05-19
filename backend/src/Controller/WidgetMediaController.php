@@ -8,6 +8,7 @@ use App\Database;
 use App\Http\Request;
 use App\Http\Response;
 use App\MediaStorage;
+use App\WidgetTiming;
 use App\Util\HostNormalizer;
 use PDO;
 
@@ -92,16 +93,19 @@ final class WidgetMediaController
         } catch (\Throwable) {
             return Response::json(['error' => 'server', 'message' => 'upload_failed'], 500);
         }
+        $durationMs = WidgetTiming::parseDurationMsFromUpload($request);
         $pdo = $this->db->pdo();
         $pdo->prepare(
-            'INSERT INTO widget_media_assets (application_id, original_filename, stored_filename, mime_type, size_bytes)
-             VALUES (?,?,?,?,?)',
+            'INSERT INTO widget_media_assets (
+                application_id, original_filename, stored_filename, mime_type, size_bytes, duration_ms
+             ) VALUES (?,?,?,?,?,?)',
         )->execute([
             $appId,
             $meta['original_filename'],
             $meta['stored_filename'],
             $meta['mime_type'],
             $meta['size_bytes'],
+            $durationMs,
         ]);
         $id = (int) $pdo->lastInsertId();
 
@@ -110,6 +114,7 @@ final class WidgetMediaController
             'id' => $id,
             'original_filename' => $meta['original_filename'],
             'size_bytes' => $meta['size_bytes'],
+            'duration_ms' => $durationMs,
             'play_url' => $this->cabinetPreviewUrl($appId, $id),
         ], 201);
     }
