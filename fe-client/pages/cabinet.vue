@@ -296,7 +296,7 @@
                 class="widget-card"
                 :class="{ editing: editingTextWidgetId(a.id) === w.id }"
               >
-                <template v-if="editingTextWidgetId(a.id) === w.id">
+                <template v-if="editingTextWidgetId(a.id) === w.id && textEditForms[w.id]">
                   <p class="ev-form-hint muted small">«{{ w.name }}»</p>
                   <form class="widget-edit-form" @submit.prevent="updateTextWidget(a, w)">
                     <textarea v-model="textEditForms[w.id].body" rows="3" required maxlength="2000" />
@@ -318,7 +318,7 @@
               </li>
             </ul>
             <p v-else class="muted small">Пока нет текстовых виджетов</p>
-            <form class="panel-block evform" @submit.prevent="saveTextWidget(a)">
+            <form v-if="textForms[a.id]" class="panel-block evform" @submit.prevent="saveTextWidget(a)">
               <input v-model="textForms[a.id].name" placeholder="Название" maxlength="128" required />
               <textarea v-model="textForms[a.id].body" placeholder="Текст" rows="3" required />
               <button type="submit" class="btn primary sm" :disabled="textPending[a.id]">Добавить</button>
@@ -334,7 +334,7 @@
                 class="widget-card"
                 :class="{ editing: editingSurveyWidgetId(a.id) === w.id }"
               >
-                <template v-if="editingSurveyWidgetId(a.id) === w.id">
+                <template v-if="editingSurveyWidgetId(a.id) === w.id && surveyEditForms[w.id]">
                   <p class="ev-form-hint muted small">«{{ w.name }}»</p>
                   <form class="widget-edit-form" @submit.prevent="updateSurveyWidget(a, w)">
                     <input v-model="surveyEditForms[w.id].title" placeholder="Заголовок" maxlength="512" required />
@@ -381,7 +381,7 @@
               </li>
             </ul>
             <p v-else class="muted small">Пока нет опросов</p>
-            <form class="panel-block evform" @submit.prevent="saveSurveyWidget(a)">
+            <form v-if="surveyForms[a.id]" class="panel-block evform" @submit.prevent="saveSurveyWidget(a)">
               <input v-model="surveyForms[a.id].name" placeholder="Название" maxlength="128" required />
               <input v-model="surveyForms[a.id].title" placeholder="Заголовок опроса" maxlength="512" required />
               <textarea v-model="surveyForms[a.id].description" placeholder="Описание (необязательно)" rows="2" />
@@ -410,7 +410,7 @@
                 class="widget-card"
                 :class="{ editing: editingVideoWidgetId(a.id) === w.id }"
               >
-                <template v-if="editingVideoWidgetId(a.id) === w.id">
+                <template v-if="editingVideoWidgetId(a.id) === w.id && videoEditForms[w.id]">
                   <p class="ev-form-hint muted small">«{{ w.name }}» · {{ w.original_filename }}</p>
                   <form class="widget-edit-form" @submit.prevent="updateVideoWidget(a, w)">
                     <input
@@ -491,6 +491,7 @@
             </ul>
             <p v-else class="muted small">Пока нет видео-виджетов</p>
             <form
+              v-if="videoForms[a.id]"
               :key="'video-create-' + a.id + '-' + (videoFormResetKey[a.id] ?? 0)"
               class="panel-block evform"
               @submit.prevent="saveVideoWidget(a)"
@@ -760,16 +761,19 @@ function onFailuresTab(appId: number) {
 }
 
 function onTextTab(appId: number) {
+  ensureWidgetForms(appId);
   setAppTab(appId, "text");
   void loadTextWidgets(appId);
 }
 
 function onSurveyTab(appId: number) {
+  ensureWidgetForms(appId);
   setAppTab(appId, "survey");
   void loadSurveyWidgets(appId);
 }
 
 function onVideoTab(appId: number) {
+  ensureWidgetForms(appId);
   setAppTab(appId, "video");
   void loadVideoWidgets(appId);
 }
@@ -1261,6 +1265,7 @@ async function load() {
     apps.value = res.applications;
     for (const a of apps.value) {
       ensureEventForm(a.id);
+      ensureWidgetForms(a.id);
       if (!a.fairies) a.fairies = [];
       for (const f of a.fairies) {
         ensureSelection(f.id, [...f.assigned_event_ids]);
@@ -1273,7 +1278,6 @@ async function load() {
         a.events = [];
       }
       await loadFailures(a.id);
-      ensureWidgetForms(a.id);
       await loadTextWidgets(a.id);
       await loadSurveyWidgets(a.id);
       await loadVideoWidgets(a.id);
